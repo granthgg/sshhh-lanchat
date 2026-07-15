@@ -1,0 +1,32 @@
+name: release
+
+# Cut a release by pushing a version tag:
+#
+#   git tag v2.1.1 && git push origin v2.1.1
+#
+# This cross-compiles every desktop target and attaches the binaries to a new
+# GitHub Release, so users can download a single file (see the README's
+# "Install" section) without needing Go.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Cross-compile all targets
+        run: make cross
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes

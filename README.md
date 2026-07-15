@@ -1,4 +1,9 @@
-# lanchat — ephemeral terminal chat for your LAN
+# lanchat — ephemeral encrypted terminal chat for your LAN
+
+[![CI](https://github.com/granthgg/sshhh-lanchat/actions/workflows/ci.yml/badge.svg)](https://github.com/granthgg/sshhh-lanchat/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/granthgg/sshhh-lanchat?sort=semver)](https://github.com/granthgg/sshhh-lanchat/releases/latest)
+[![Go Report Card](https://goreportcard.com/badge/github.com/granthgg/sshhh-lanchat)](https://goreportcard.com/report/github.com/granthgg/sshhh-lanchat)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 Talk to people on the **same Wi-Fi** from a terminal. No server, no account, no
 database, nothing written to disk. Messages exist only while your window is
@@ -6,11 +11,34 @@ open — close it and they're gone. It looks like log output, and one keystroke
 turns the screen into a fake build so a glance over your shoulder reads as
 "compiling," not "chatting."
 
-It's a single ~4 MB binary. Everyone who runs it with the same **room** and
-**passphrase** is in the same conversation, like tuning a walkie-talkie to a
-channel.
+It's a single ~3 MB binary with no runtime dependencies. Everyone who runs it
+with the same **room** and **passphrase** is in the same conversation, like
+tuning a walkie-talkie to a channel.
 
----
+```
+welcome to lanchat 2.1.1
+you're in room "lobby" as "granth"
+→ type a message and press Enter to send it
+→ everyone on this Wi-Fi in the same room sees it in real time
+→ /help = commands   /nick = rename   /quit = leave   Ctrl-B = quick-hide
+» hello, anyone around?
+14:22:04 alice        hey! yes
+» ▏
+```
+
+## Contents
+
+- [Use it in 30 seconds](#use-it-in-30-seconds)
+- [Install](#install)
+- [Commands](#commands)
+- [Flags](#flags)
+- [Stealth: the boss key](#stealth-the-boss-key)
+- [How it works](#how-it-works)
+- [Security model — read this](#security-model--read-this)
+- [Troubleshooting](#troubleshooting)
+- [Limitations (by design)](#limitations-by-design)
+- [Development](#development)
+- [License](#license)
 
 ## Use it in 30 seconds
 
@@ -21,17 +49,6 @@ lanchat
 That's it — you're in the room called **"lobby"**. Now just **type a message and
 press Enter**; anyone else on your Wi-Fi who also ran `lanchat` sees it. Type
 `/quit` (or press Ctrl-C) to leave.
-
-```
-welcome to lanchat 2.1.0
-you're in room "lobby" as "granth"
-→ type a message and press Enter to send it
-→ everyone on this Wi-Fi in the same room sees it in real time
-→ /help = commands   /nick = rename   /quit = leave   Ctrl-B = quick-hide
-» hello, anyone around?
-14:22:04 alice        hey! yes
-» ▏
-```
 
 **To make it private**, pick a room name and a shared password. Everyone who
 wants in uses the **same two things**:
@@ -46,11 +63,9 @@ else on the network just sees encrypted noise.
 > Prefer not to put the password on the command line? Use `lanchat -r team -ask`
 > (it asks you and doesn't show it) or set `CHAT_KEY` in your environment.
 
----
-
 ## Install
 
-### Option A — Download and run (no Go, easiest)
+### Option A — Download a prebuilt binary (no Go, easiest)
 
 Grab the file for your system from the **[latest release »](https://github.com/granthgg/sshhh-lanchat/releases/latest)**:
 
@@ -75,10 +90,19 @@ xattr -d com.apple.quarantine lanchat-* 2>/dev/null    # macOS only: clear the "
 ```
 
 To type just `lanchat` from any folder, move it onto your PATH and rename it,
-e.g. `mv lanchat-macos-arm64 ~/.local/bin/lanchat` — or use **Option B**, which
+e.g. `mv lanchat-macos-arm64 ~/.local/bin/lanchat` — or use **Option C**, which
 does that for you.
 
-### Option B — Build from source (needs Go 1.25+)
+### Option B — `go install` (one command, needs Go 1.25+)
+
+```sh
+go install github.com/granthgg/sshhh-lanchat/cmd/lanchat@latest
+```
+
+This drops `lanchat` in `$(go env GOPATH)/bin`. Make sure that directory is on
+your PATH.
+
+### Option C — Build from source with the installer (needs Go 1.25+)
 
 <details>
 <summary><b>How to install Go</b></summary>
@@ -92,7 +116,7 @@ does that for you.
 
 ```sh
 git clone https://github.com/granthgg/sshhh-lanchat.git
-cd sshhh-lanchat && ./install.sh
+cd sshhh-lanchat && ./scripts/install.sh
 ```
 
 **Windows (PowerShell)**
@@ -100,7 +124,7 @@ cd sshhh-lanchat && ./install.sh
 ```powershell
 git clone https://github.com/granthgg/sshhh-lanchat.git
 cd sshhh-lanchat
-powershell -ExecutionPolicy Bypass -File install.ps1
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 ```
 
 The installer drops `lanchat` into a directory already on your PATH (like
@@ -116,17 +140,6 @@ directory** with no manual setup.
 Easiest: send them the **[release link](https://github.com/granthgg/sshhh-lanchat/releases/latest)** —
 they download one file and run it. No Go, no build, no `git clone`. (Or just
 hand them the binary directly over AirDrop / USB / Slack.)
-
----
-
-## Why is it called `lanchat` and not `chat`?
-
-Because macOS and most Linuxes already ship a program called **`chat`** (the old
-PPP modem-dialer at `/usr/sbin/chat`). If this tool were also called `chat`,
-typing `chat` might run *that* one instead — it exits silently and looks broken.
-`lanchat` avoids the collision so `lanchat` always means this program.
-
----
 
 ## Commands
 
@@ -144,7 +157,7 @@ typing `chat` might run *that* one instead — it exits silently and looks broke
 Editing keys: arrows (move / history), Home/End, Ctrl-A/E, Ctrl-U (clear line),
 Ctrl-W (delete word), Ctrl-L (clear screen), Backspace/Delete.
 
-### Flags
+## Flags
 
 | Flag | Meaning | Default |
 |------|---------|---------|
@@ -163,8 +176,6 @@ Ctrl-W (delete word), Ctrl-L (clear screen), Backspace/Delete.
 > `-k`. Anything on the command line is visible in your shell history and to
 > other users via the process list.
 
----
-
 ## Stealth: the boss key
 
 Press **Ctrl-B** and the screen is instantly replaced with plausible build
@@ -173,8 +184,6 @@ suppressed** (not just scrolled off) so nothing pops up to give you away — you
 told how many you missed when you come back. Any keystroke restores the chat.
 `/boss` does the same thing if you prefer a command. Run with `-stealth` to make
 the normal prompt look like a shell too.
-
----
 
 ## How it works
 
@@ -194,7 +203,8 @@ fallback for networks that drop multicast). That single choice gives you:
   ciphertext. Traffic uses multicast **TTL 1**, so it never leaves the local
   segment.
 
----
+For the wire format, package layout, and threading model, see
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Security model — read this
 
@@ -214,8 +224,6 @@ without the passphrase, captured packets are unreadable).
 - Text from the network is stripped of control characters before display, so a
   peer can't inject terminal escape sequences — but a shared passphrase still
   means shared trust.
-
----
 
 ## Troubleshooting
 
@@ -239,8 +247,6 @@ run it by full path once (e.g. `/opt/homebrew/bin/lanchat` or
 5. **See what's arriving:** run with `CHAT_DEBUG=1` to print received-packet
    diagnostics to stderr.
 
----
-
 ## Limitations (by design)
 
 - **Best-effort delivery.** UDP can drop a packet on a congested network; a
@@ -252,31 +258,38 @@ run it by full path once (e.g. `/opt/homebrew/bin/lanchat` or
   a given looped-back packet can be unreliable due to how macOS load-balances a
   shared socket. Normal use — one instance per machine — is unaffected.
 
----
-
 ## Development
 
 ```sh
-go build -o lanchat .    # build
-go test ./...            # unit tests (crypto round-trip, room isolation, dedup, sanitizer)
-go vet ./...
-make cross               # all desktop targets
+make build      # build ./lanchat for this machine
+make test       # unit tests (crypto round-trip, room isolation, dedup, sanitizer)
+make vet        # go vet ./...
+make fmt        # gofmt the tree
+make cross      # build binaries for all desktop targets into dist/
 ```
 
-Layout:
+The project follows the standard Go layout:
 
-| File | Responsibility |
+| Path | Responsibility |
 |------|----------------|
-| `main.go` | flags, lifecycle, receive/presence loops, commands |
-| `transport.go` | UDP multicast + broadcast, interface selection |
-| `crypto.go` | key derivation, AES-256-GCM sealing, wire framing |
-| `proto.go` | message record, dedup, sanitizer |
-| `roster.go` | presence tracking |
-| `ui.go` | raw-mode line editor + thread-safe printer |
-| `stealth.go` | the boss-key decoy screen |
-| `sockopt_*.go` | per-OS socket options (`SO_REUSEPORT`, broadcast) |
+| `cmd/lanchat/` | CLI entry point — flags, usage, key resolution, wiring |
+| `internal/chat/` | composition root: builds a session and runs the loops |
+| `internal/crypto/` | key derivation, AES-256-GCM sealing, wire framing |
+| `internal/proto/` | message record, dedup, sequence numbers, sanitizer |
+| `internal/roster/` | presence tracking |
+| `internal/transport/` | UDP multicast + broadcast, interface selection, sockopts |
+| `internal/ui/` | raw-mode line editor, thread-safe printer, boss-key decoy |
 | `legacy/tchat.go` | the original TCP-relay prototype, kept for reference |
 
 Zero third-party crypto — encryption is Go's standard library. The only
 dependencies are the official `golang.org/x/{net,term,sys}` packages for
-cross-platform multicast and terminal handling.
+cross-platform multicast and terminal handling. See
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a deeper tour.
+
+Releases are cut by pushing a version tag (`git tag v2.1.1 && git push origin
+v2.1.1`); CI cross-compiles every target and attaches the binaries to a GitHub
+Release automatically.
+
+## License
+
+[MIT](LICENSE) © Granth Gaurav

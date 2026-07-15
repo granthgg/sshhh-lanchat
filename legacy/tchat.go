@@ -36,9 +36,9 @@ import (
 )
 
 const (
-	discoveryPort = 48710       // UDP port used only to announce/find the host
-	chatPort      = 48711       // TCP port the host relay listens on
-	beaconPrefix  = "TCHAT1|"   // beacon payload prefix, followed by the chat port
+	discoveryPort = 48710     // UDP port used only to announce/find the host
+	chatPort      = 48711     // TCP port the host relay listens on
+	beaconPrefix  = "TCHAT1|" // beacon payload prefix, followed by the chat port
 )
 
 var nick = defaultNick()

@@ -1,4 +1,4 @@
-module chat
+module github.com/granthgg/sshhh-lanchat
 
 go 1.25.0
 

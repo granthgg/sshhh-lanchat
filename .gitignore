@@ -1,8 +1,15 @@
-# compiled binaries (this project builds `lanchat`; dev builds may produce `chat`)
-lanchat
-chat
+# compiled binaries — anchored to the repo root so the cmd/lanchat/ source
+# directory is NOT ignored. `make build` produces ./lanchat; `make cross` fills
+# ./dist. Release binaries are published to GitHub Releases, never committed.
+/lanchat
+/chat
 *.exe
 /dist/
+/legacy
+
+# test / coverage output
+*.out
+coverage.*
 
 # editor / OS cruft
 *.swp
