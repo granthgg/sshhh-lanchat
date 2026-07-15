@@ -50,58 +50,72 @@ else on the network just sees encrypted noise.
 
 ## Install
 
-You need the [Go toolchain](https://go.dev/dl/) (1.25+) **to build it once**.
-The people you chat with do **not** need Go — you can just hand them the binary.
+### Option A — Download and run (no Go, easiest)
+
+Grab the file for your system from the **[latest release »](https://github.com/granthgg/sshhh-lanchat/releases/latest)**:
+
+| Your system | File to download |
+|---|---|
+| Windows (most PCs) | `lanchat-windows-amd64.exe` |
+| Windows (ARM) | `lanchat-windows-arm64.exe` |
+| Mac (Apple Silicon · M1–M4) | `lanchat-macos-arm64` |
+| Mac (Intel) | `lanchat-macos-amd64` |
+| Linux (x86-64) | `lanchat-linux-amd64` |
+| Linux (ARM) | `lanchat-linux-arm64` |
+
+**Windows** — rename it to `lanchat.exe` and run it. If SmartScreen warns, click
+**More info → Run anyway** (the file is unsigned, not malicious).
+
+**macOS / Linux** — in the terminal, in your downloads folder:
+
+```sh
+chmod +x lanchat-*                                     # make it runnable
+xattr -d com.apple.quarantine lanchat-* 2>/dev/null    # macOS only: clear the "unverified developer" block
+./lanchat-macos-arm64                                  # run it (use your file's name)
+```
+
+To type just `lanchat` from any folder, move it onto your PATH and rename it,
+e.g. `mv lanchat-macos-arm64 ~/.local/bin/lanchat` — or use **Option B**, which
+does that for you.
+
+### Option B — Build from source (needs Go 1.25+)
 
 <details>
 <summary><b>How to install Go</b></summary>
 
 - **macOS (Homebrew):** `brew install go`
-- **Windows / Linux:** Download the official installer from the [Go downloads page](https://go.dev/dl/).
+- **Windows / Linux:** the official installer from the [Go downloads page](https://go.dev/dl/).
 - **Ubuntu / Debian:** `sudo apt update && sudo apt install golang-go`
 </details>
 
-### macOS / Linux
+**macOS / Linux**
 
 ```sh
 git clone https://github.com/granthgg/sshhh-lanchat.git
 cd sshhh-lanchat && ./install.sh
 ```
 
-### Windows (PowerShell)
+**Windows (PowerShell)**
 
 ```powershell
+git clone https://github.com/granthgg/sshhh-lanchat.git
+cd sshhh-lanchat
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
-### With make
+The installer drops `lanchat` into a directory already on your PATH (like
+`/opt/homebrew/bin`), or installs to `~/.local/bin` and adds that to your PATH
+by editing your shell startup file for you — so **you can run `lanchat` from any
+directory** with no manual setup.
 
-```sh
-make install          # build + copy onto your PATH
-make                  # just build ./lanchat here
-make cross            # build binaries for macOS/Windows/Linux into dist/
-```
+> If the *same* terminal you installed from still says `command not found`, it
+> cached the old PATH — open a new terminal (or run `hash -r`).
 
-**You don't have to configure anything.** The installer puts `lanchat` in a
-directory that's already on your PATH (like `/opt/homebrew/bin` or
-`/usr/local/bin`) when one is available, so you can run `lanchat` from **any
-directory** immediately. If there isn't one, it installs to `~/.local/bin` and
-adds that to your PATH by editing your shell startup file for you — then you
-just open a new terminal.
+### Share with friends
 
-> The only case that needs a nudge: the *same* terminal you installed from may
-> still say `command not found` because it cached the old PATH. Open a new
-> terminal (or run `hash -r`) and you're set.
-
-### Share with friends (no Go needed)
-
-Build once, then send them the single file — AirDrop, USB, Slack, whatever:
-
-```sh
-make cross   # produces dist/lanchat-macos-arm64, dist/lanchat-windows-amd64.exe, ...
-```
-
-They put it somewhere on their PATH and run `lanchat`. That's the whole install.
+Easiest: send them the **[release link](https://github.com/granthgg/sshhh-lanchat/releases/latest)** —
+they download one file and run it. No Go, no build, no `git clone`. (Or just
+hand them the binary directly over AirDrop / USB / Slack.)
 
 ---
 
