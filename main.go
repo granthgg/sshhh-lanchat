@@ -29,7 +29,7 @@ import (
 	"golang.org/x/term"
 )
 
-const version = "2.1.0"
+const version = "2.1.1"
 
 var debugOn = os.Getenv("CHAT_DEBUG") != ""
 
@@ -50,6 +50,8 @@ type app struct {
 }
 
 func main() {
+	enableVirtualTerminal() // Windows: turn on ANSI + UTF-8; no-op elsewhere
+
 	var (
 		room    = flag.String("room", "lobby", "channel name to join")
 		nick    = flag.String("nick", defaultNick(), "your display name")
