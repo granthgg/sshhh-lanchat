@@ -1,0 +1,9 @@
+# compiled binaries (this project builds `lanchat`; dev builds may produce `chat`)
+lanchat
+chat
+*.exe
+/dist/
+
+# editor / OS cruft
+*.swp
+.DS_Store
