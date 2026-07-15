@@ -53,6 +53,14 @@ else on the network just sees encrypted noise.
 You need the [Go toolchain](https://go.dev/dl/) (1.25+) **to build it once**.
 The people you chat with do **not** need Go — you can just hand them the binary.
 
+<details>
+<summary><b>How to install Go</b></summary>
+
+- **macOS (Homebrew):** `brew install go`
+- **Windows / Linux:** Download the official installer from the [Go downloads page](https://go.dev/dl/).
+- **Ubuntu / Debian:** `sudo apt update && sudo apt install golang-go`
+</details>
+
 ### macOS / Linux
 
 ```sh
