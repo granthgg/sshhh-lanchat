@@ -82,10 +82,16 @@ make                  # just build ./lanchat here
 make cross            # build binaries for macOS/Windows/Linux into dist/
 ```
 
-If your terminal says **`command not found: lanchat`** right after installing,
-either restart the terminal or add the install dir to your PATH — the installer
-prints the exact line to add. You can always run it by full path, e.g.
-`~/.local/bin/lanchat`.
+**You don't have to configure anything.** The installer puts `lanchat` in a
+directory that's already on your PATH (like `/opt/homebrew/bin` or
+`/usr/local/bin`) when one is available, so you can run `lanchat` from **any
+directory** immediately. If there isn't one, it installs to `~/.local/bin` and
+adds that to your PATH by editing your shell startup file for you — then you
+just open a new terminal.
+
+> The only case that needs a nudge: the *same* terminal you installed from may
+> still say `command not found` because it cached the old PATH. Open a new
+> terminal (or run `hash -r`) and you're set.
 
 ### Share with friends (no Go needed)
 
@@ -199,9 +205,11 @@ without the passphrase, captured packets are unreadable).
 
 ## Troubleshooting
 
-**`command not found: lanchat`** — the install dir isn't on your PATH yet.
-Restart your terminal, or run the full path the installer printed (e.g.
-`~/.local/bin/lanchat`).
+**`command not found: lanchat`** — almost always just the terminal you
+installed from caching its old PATH. **Open a new terminal** (or run `hash -r`)
+and try again. If it still fails, the installer told you where it put the binary;
+run it by full path once (e.g. `/opt/homebrew/bin/lanchat` or
+`~/.local/bin/lanchat`) to confirm it's there.
 
 **We're on the same Wi-Fi but can't see each other.**
 

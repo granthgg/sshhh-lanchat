@@ -12,9 +12,6 @@ DIST   := dist
 VERSION := $(shell awk -F'"' '/const version/{print $$2}' main.go 2>/dev/null)
 LDFLAGS := -s -w
 
-# Pick an install dir that is likely on PATH and writable.
-PREFIX ?= $(shell if [ -w /usr/local/bin ]; then echo /usr/local/bin; else echo $$HOME/.local/bin; fi)
-
 .PHONY: all build install test vet cross run clean
 
 all: build
@@ -22,11 +19,10 @@ all: build
 build:
 	go build -ldflags "$(LDFLAGS)" -o $(BINARY) .
 
-install: build
-	mkdir -p "$(PREFIX)"
-	install -m 0755 $(BINARY) "$(PREFIX)/$(BINARY)"
-	@echo "installed $(PREFIX)/$(BINARY)"
-	@case ":$$PATH:" in *":$(PREFIX):"*) ;; *) echo "note: add $(PREFIX) to your PATH";; esac
+# Delegates to install.sh, which picks a directory already on your PATH (so
+# `lanchat` runs from anywhere with no setup) or configures your PATH for you.
+install:
+	@sh "$(CURDIR)/install.sh"
 
 test:
 	go test ./...

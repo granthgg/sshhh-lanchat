@@ -4,56 +4,100 @@
 #   ./install.sh
 #   curl -fsSL <raw-url>/install.sh | sh   # if you host it
 #
-# Builds the single binary from source with the Go toolchain and copies it to a
-# directory on your PATH. No root required (falls back to ~/.local/bin).
+# Builds the single binary and installs it so you can run `lanchat` from ANY
+# directory, with no manual setup:
+#
+#   1. If a standard bin dir is already on your PATH and writable (e.g.
+#      /opt/homebrew/bin, /usr/local/bin), it installs there — works instantly.
+#   2. Otherwise it installs to ~/.local/bin and adds that to your PATH by
+#      editing your shell startup file for you.
+#
+# No root/sudo required.
 
 set -eu
 
 BINARY="lanchat"
 SRC_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 
-say()  { printf '%s\n' "$*"; }
-die()  { printf 'error: %s\n' "$*" >&2; exit 1; }
+say() { printf '%s\n' "$*"; }
+die() { printf 'error: %s\n' "$*" >&2; exit 1; }
+on_path() { case ":${PATH}:" in *":$1:"*) return 0 ;; *) return 1 ;; esac; }
 
-# 1. Toolchain check.
-command -v go >/dev/null 2>&1 || die "Go is not installed. Get it from https://go.dev/dl/ (need 1.25+), then re-run."
-
-GOVER="$(go env GOVERSION 2>/dev/null || echo unknown)"
-say "==> using $GOVER"
-
-# 2. Build.
+# --- 1. build --------------------------------------------------------------
+command -v go >/dev/null 2>&1 || die "Go is not installed (need 1.25+): https://go.dev/dl/"
+say "==> using $(go env GOVERSION)"
 say "==> building $BINARY ..."
 ( cd "$SRC_DIR" && go build -ldflags "-s -w" -o "$BINARY" . ) || die "build failed"
 
-# 3. Choose an install directory that is writable and (ideally) on PATH.
-if [ -w /usr/local/bin ] 2>/dev/null; then
-	DEST="/usr/local/bin"
-elif [ -n "${HOME:-}" ]; then
+# --- 2. choose an install directory ----------------------------------------
+# Prefer somewhere already on PATH and writable: instant, no config, no sudo.
+DEST=""
+for d in /usr/local/bin /opt/homebrew/bin "$(go env GOPATH)/bin" "$HOME/.local/bin" "$HOME/bin"; do
+	if on_path "$d" && [ -d "$d" ] && [ -w "$d" ]; then
+		DEST="$d"
+		break
+	fi
+done
+# Fallback: a per-user dir we create and add to PATH ourselves.
+NEED_PATH_EDIT=0
+if [ -z "$DEST" ]; then
 	DEST="$HOME/.local/bin"
-else
-	DEST="$SRC_DIR"
+	mkdir -p "$DEST"
+	on_path "$DEST" || NEED_PATH_EDIT=1
 fi
-mkdir -p "$DEST"
 
-install -m 0755 "$SRC_DIR/$BINARY" "$DEST/$BINARY" 2>/dev/null \
-	|| cp "$SRC_DIR/$BINARY" "$DEST/$BINARY" && chmod 0755 "$DEST/$BINARY"
-
+# --- 3. install ------------------------------------------------------------
+if ! install -m 0755 "$SRC_DIR/$BINARY" "$DEST/$BINARY" 2>/dev/null; then
+	cp "$SRC_DIR/$BINARY" "$DEST/$BINARY" && chmod 0755 "$DEST/$BINARY" || die "could not copy to $DEST"
+fi
 say "==> installed $DEST/$BINARY"
 
-# 4. PATH hint.
-case ":$PATH:" in
-	*":$DEST:"*) : ;;
-	*) say ""
-	   say "    $DEST is not on your PATH. Add this to your shell profile:"
-	   say "        export PATH=\"$DEST:\$PATH\"" ;;
+# --- 4. make sure it runs from anywhere ------------------------------------
+if [ "$NEED_PATH_EDIT" -eq 0 ]; then
+	say ""
+	say "✔ done. Open a terminal anywhere and run:  $BINARY"
+	say "  (if this exact terminal still says 'command not found', run 'hash -r' or open a new one)"
+	exit 0
+fi
+
+# Add DEST to PATH by editing the right startup file for the user's shell.
+marker="# added by lanchat installer"
+export_line="export PATH=\"$DEST:\$PATH\""
+shell_name="$(basename "${SHELL:-sh}")"
+edited=""
+
+append_line() { # $1 = rc file, $2 = line to add
+	rc="$1"
+	[ -e "$rc" ] || : > "$rc"
+	if ! grep -qF "$marker" "$rc" 2>/dev/null; then
+		printf '\n%s\n%s\n' "$marker" "$2" >> "$rc"
+	fi
+	edited="$edited $rc"
+}
+
+case "$shell_name" in
+	zsh)
+		append_line "$HOME/.zshrc" "$export_line"
+		;;
+	bash)
+		append_line "$HOME/.bashrc" "$export_line"
+		[ "$(uname 2>/dev/null)" = "Darwin" ] && append_line "$HOME/.bash_profile" "$export_line"
+		;;
+	fish)
+		conf="$HOME/.config/fish/config.fish"
+		mkdir -p "$(dirname "$conf")"
+		append_line "$conf" "fish_add_path $DEST"
+		;;
+	*)
+		append_line "$HOME/.profile" "$export_line"
+		;;
 esac
 
 say ""
-say "done. try it:   $BINARY               (open room 'lobby')"
-say "                $BINARY -r team -ask    (private room)"
+say "✔ installed, and added $DEST to your PATH in:$edited"
 say ""
-say "if '$BINARY' says 'command not found', restart your terminal (or run the"
-say "full path: $DEST/$BINARY)."
+say "  This terminal won't see it until you reload. Do ONE of:"
+say "      • open a new terminal window, or"
+say "      • run:  export PATH=\"$DEST:\$PATH\""
 say ""
-say "tip: to share with a friend who doesn't have Go, just send them the single"
-say "     '$BINARY' file — it is self-contained."
+say "  Then, from any directory:  $BINARY"
