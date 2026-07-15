@@ -56,7 +56,8 @@ The people you chat with do **not** need Go — you can just hand them the binar
 ### macOS / Linux
 
 ```sh
-./install.sh
+git clone https://github.com/granthgg/sshhh-lanchat.git
+cd sshhh-lanchat && ./install.sh
 ```
 
 ### Windows (PowerShell)
