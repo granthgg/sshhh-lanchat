@@ -34,6 +34,8 @@ jobs:
       - name: Generate SHA-256 checksums
         run: cd dist && sha256sum * > checksums.txt && cat checksums.txt
       - name: Write release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           cat > "$RUNNER_TEMP/notes.md" <<'EOF'
           ## Install
@@ -54,12 +56,16 @@ jobs:
           Manual downloads are unsigned, so Windows/macOS will show an
           "unknown publisher" warning — see the README's Install section for
           why that happens and the exact steps to proceed safely.
+
           EOF
+          # Append the auto-generated changelog (best-effort: the release
+          # must still publish even if this API call hiccups).
+          gh api -X POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$GITHUB_REF_NAME" --jq .body >> "$RUNNER_TEMP/notes.md" || true
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" dist/* \
             --title "$GITHUB_REF_NAME" \
-            --notes-file "$RUNNER_TEMP/notes.md" \
-            --generate-notes
+            --notes-file "$RUNNER_TEMP/notes.md"
