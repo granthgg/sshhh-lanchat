@@ -118,6 +118,11 @@ func TestBossReplay(t *testing.T) {
 	u.Chat("bob", "second while hidden", true) // mention: still silent while hidden
 	u.ToggleBoss()                             // restore → replay
 
+	// Close before reading: Windows cannot delete a still-open file, which
+	// would fail the test's TempDir cleanup.
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
 	data, err := os.ReadFile(f.Name())
 	if err != nil {
 		t.Fatal(err)
@@ -152,6 +157,9 @@ func TestBossReplayCapped(t *testing.T) {
 	}
 	u.ToggleBoss()
 
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
 	data, _ := os.ReadFile(f.Name())
 	out := string(data)
 	if !strings.Contains(out, "507 message(s)") || !strings.Contains(out, "showing the last 500") {
