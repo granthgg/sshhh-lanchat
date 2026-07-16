@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -175,6 +176,32 @@ func Sanitize(s string) string {
 		}
 	}
 	return b.String()
+}
+
+// Mentions reports whether text mentions nick as a whole word, ignoring case
+// and a leading '@'. "hey granth!" and "@Granth ping" mention "granth";
+// "granthology" does not. Word characters are letters, digits, '_' and '-';
+// a nick containing other characters is only matched between non-word runes.
+func Mentions(text, nick string) bool {
+	if nick == "" {
+		return false
+	}
+	var tok []rune
+	for _, r := range text {
+		if isWordRune(r) {
+			tok = append(tok, r)
+			continue
+		}
+		if len(tok) > 0 && strings.EqualFold(string(tok), nick) {
+			return true
+		}
+		tok = tok[:0]
+	}
+	return len(tok) > 0 && strings.EqualFold(string(tok), nick)
+}
+
+func isWordRune(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '-'
 }
 
 // ClampRunes truncates s to at most n runes.

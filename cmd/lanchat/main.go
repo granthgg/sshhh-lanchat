@@ -26,7 +26,7 @@ import (
 	"github.com/granthgg/sshhh-lanchat/internal/ui"
 )
 
-const version = "2.2.0"
+const version = "2.3.0"
 
 func main() {
 	ui.EnableVirtualTerminal() // Windows: turn on ANSI + UTF-8; no-op elsewhere
@@ -42,6 +42,7 @@ func main() {
 		stealth = flag.Bool("stealth", false, `disguise the prompt as a shell "$ " for a lower profile`)
 		prompt  = flag.String("prompt", "", `input prompt (default "» ", or "$ " with -stealth)`)
 		noBcast = flag.Bool("no-broadcast", false, "disable the UDP broadcast fallback")
+		noBell  = flag.Bool("no-bell", false, "don't ring the terminal bell when your name is mentioned")
 		showVer = flag.Bool("version", false, "print version and exit")
 	)
 	// Short aliases.
@@ -86,6 +87,7 @@ func main() {
 		Prompt:     promptStr,
 		Broadcast:  !*noBcast,
 		TTL:        *ttl,
+		Bell:       !*noBell,
 		Version:    version,
 	})
 	if err != nil {
@@ -152,6 +154,7 @@ flags:
       -stealth       disguise the prompt as a shell "$ "
       -prompt <str>  custom input prompt
       -no-broadcast  disable the broadcast fallback
+      -no-bell       don't ring the bell when your name is mentioned
       -version       print version
 
 examples:
@@ -162,7 +165,7 @@ examples:
 
 in session: type a message and press Enter to send
             /who  /nick <name>  /me <action>  /clear  /boss  /quit
-            Ctrl-B hides the screen instantly (boss key)
+            Tab completes names & commands; Ctrl-B hides the screen (boss key)
 `, version)
 }
 

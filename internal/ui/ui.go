@@ -33,6 +33,7 @@ type UI struct {
 	oldState *term.State
 	color    bool
 	logStyle bool // stealth: flat unstyled lines that read as log output
+	bell     bool // ring the terminal bell when a line asks for it (mentions)
 	prompt   string
 
 	buf     []rune // current input line
@@ -40,26 +41,47 @@ type UI struct {
 	history [][]rune
 	histPos int // index into history while browsing; == len(history) when not
 
-	hidden bool // boss-mode: incoming messages are suppressed
-	missed int  // messages dropped while hidden
+	hidden        bool     // boss-mode: incoming messages are held, not shown
+	hiddenBuf     []string // lines held while hidden, replayed on restore
+	hiddenDropped int      // lines beyond the buffer cap, oldest first
+
+	// Tab-completion session state; owned by the Run goroutine.
+	compActive bool
+	compCands  []string
+	compIdx    int
+	compStart  int // rune index where the completed word begins
+	compEnd    int // rune index just past the inserted completion
+	compSuffix string
+
+	// Completer, when set, returns completion candidates for the word before
+	// the cursor. lineStart reports whether the word begins the line. Set it
+	// before Run.
+	Completer func(word string, lineStart bool) []string
 
 	// Lines delivers completed input lines to the main loop. Run closes it
 	// when input ends.
 	Lines chan string
 }
 
+// Options configures New.
+type Options struct {
+	Prompt   string
+	Color    bool // colorize nicknames
+	LogStyle bool // stealth: flat unstyled lines that read as log output
+	Bell     bool // ring the terminal bell on mention-flagged lines
+}
+
 // New returns a UI bound to stdin/stdout. If stdin is a terminal it switches
-// to raw mode; otherwise it stays in line-buffered mode. logStyle selects the
-// flat, unstyled "log output" line format used by stealth mode, instead of the
-// decorated one (bold right-aligned nicks, dim timestamps, │ gutter).
-func New(prompt string, color, logStyle bool) *UI {
+// to raw mode; otherwise it stays in line-buffered mode.
+func New(o Options) *UI {
 	u := &UI{
 		out:      os.Stdout,
 		in:       bufio.NewReader(os.Stdin),
 		fd:       int(os.Stdin.Fd()),
-		color:    color,
-		logStyle: logStyle,
-		prompt:   prompt,
+		color:    o.Color,
+		logStyle: o.LogStyle,
+		bell:     o.Bell,
+		prompt:   o.Prompt,
 		Lines:    make(chan string, 16),
 	}
 	u.histPos = 0
@@ -85,14 +107,28 @@ func (u *UI) Restore() {
 
 // ---- output ----------------------------------------------------------------
 
-// emit prints one finished display line above the input line. In boss mode it
-// is swallowed (and counted) so nothing pops up over the decoy screen.
-func (u *UI) emit(line string) {
+// hiddenBufCap bounds how many lines boss mode holds for replay. Beyond it the
+// oldest lines are dropped (and counted), so an hours-long hide can't grow
+// memory without limit. Everything stays in memory only — never on disk.
+const hiddenBufCap = 500
+
+// emit prints one finished display line above the input line. In boss mode
+// nothing may appear over the decoy screen, so the line is held (bounded) and
+// replayed when the user comes back. bell asks for a terminal bell with the
+// line — suppressed while hidden, since a beep would give the user away.
+func (u *UI) emit(line string, bell bool) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	if u.hidden {
-		u.missed++
+		if len(u.hiddenBuf) >= hiddenBufCap {
+			u.hiddenBuf = u.hiddenBuf[1:]
+			u.hiddenDropped++
+		}
+		u.hiddenBuf = append(u.hiddenBuf, line)
 		return
+	}
+	if bell && u.bell && u.raw {
+		line += "\a"
 	}
 	if !u.raw {
 		fmt.Fprintln(u.out, line)
@@ -152,7 +188,7 @@ func (u *UI) draw() {
 // Plain prints one line verbatim, with no timestamp or name column. The
 // startup banner uses it; chat traffic never does.
 func (u *UI) Plain(line string) {
-	u.emit(line)
+	u.emit(line, false)
 }
 
 // Interactive reports whether the UI drives a real terminal in raw mode
@@ -168,19 +204,20 @@ func (u *UI) Width() int {
 	return 80
 }
 
-// Chat prints a chat line from nick.
-func (u *UI) Chat(nick, text string) {
-	u.emit(u.format(nick, text, false))
+// Chat prints a chat line from nick. mention highlights the line and rings
+// the terminal bell (when enabled): it marks messages that name the user.
+func (u *UI) Chat(nick, text string, mention bool) {
+	u.emit(u.format(nick, text, false, mention), mention)
 }
 
-// Action prints an emote, e.g. "* alice waves".
-func (u *UI) Action(nick, text string) {
-	u.emit(u.format("*", nick+" "+text, false))
+// Action prints an emote, e.g. "* alice waves". mention behaves as in Chat.
+func (u *UI) Action(nick, text string, mention bool) {
+	u.emit(u.format("*", nick+" "+text, false, mention), mention)
 }
 
 // System prints a system notice.
 func (u *UI) System(text string) {
-	u.emit(u.format("·", text, true))
+	u.emit(u.format("·", text, true, false), false)
 }
 
 // nickCol is the fixed display width of the name column.
@@ -193,22 +230,25 @@ const nickCol = 12
 // right-aligned into a fixed column and emphasized (bold, or its hash color
 // with -color), and a dim │ gutter runs between names and messages, forming a
 // clean vertical seam down the screen. System notices are dimmed whole so real
-// chat stands out. Log style (stealth) keeps the flat, unstyled layout that
-// passes for logger output.
-func (u *UI) format(nick, text string, system bool) string {
+// chat stands out; mention-flagged messages are bolded so lines that name the
+// user stand out further. Log style (stealth) keeps the flat, unstyled layout
+// that passes for logger output.
+func (u *UI) format(nick, text string, system, mention bool) string {
 	ts := time.Now().Format("15:04:05")
 	name := proto.ClampRunes(nick, nickCol)
+	pad := strings.Repeat(" ", nickCol-len([]rune(name)))
 	if u.logStyle {
-		pad := strings.Repeat(" ", nickCol-len([]rune(name)))
 		return ts + " " + name + pad + " " + text
 	}
-	pad := strings.Repeat(" ", nickCol-len([]rune(name)))
 	if system {
 		return u.sgr("2", ts+" "+pad+name+" │ "+text)
 	}
 	styled := u.sgr("1", name)
 	if u.color {
 		styled = u.sgr(strconv.Itoa(colorFor(nick)), name)
+	}
+	if mention {
+		text = u.sgr("1", text)
 	}
 	return u.sgr("2", ts) + " " + pad + styled + " " + u.sgr("2", "│") + " " + text
 }
@@ -233,24 +273,35 @@ func colorFor(s string) int {
 
 // ---- boss mode -------------------------------------------------------------
 
-// ToggleBoss hides the chat behind the decoy build output, or restores it. When
-// restoring, it reports how many messages were suppressed while hidden.
+// ToggleBoss hides the chat behind the decoy build output, or restores it.
+// Restoring replays every line that arrived while hidden (from the bounded
+// in-memory buffer), so a quick Ctrl-B no longer costs you the conversation.
 func (u *UI) ToggleBoss() {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	if !u.hidden {
 		u.hidden = true
-		u.missed = 0
+		u.hiddenBuf = nil
+		u.hiddenDropped = 0
 		fmt.Fprint(u.out, "\x1b[2J\x1b[H")
 		printDecoy(u.out, u.raw)
 		return
 	}
 	u.hidden = false
 	fmt.Fprint(u.out, "\x1b[2J\x1b[H")
-	if u.missed > 0 {
-		note := fmt.Sprintf("(%d message(s) arrived while hidden and were not shown)", u.missed)
-		fmt.Fprint(u.out, u.format("·", note, true), lineEnd(u.raw))
+	end := lineEnd(u.raw)
+	if n := len(u.hiddenBuf); n > 0 {
+		note := fmt.Sprintf("while hidden, %d message(s) arrived:", n+u.hiddenDropped)
+		if u.hiddenDropped > 0 {
+			note += fmt.Sprintf(" (showing the last %d)", n)
+		}
+		fmt.Fprint(u.out, u.format("·", note, true, false), end)
+		for _, line := range u.hiddenBuf {
+			fmt.Fprint(u.out, line, end)
+		}
 	}
+	u.hiddenBuf = nil
+	u.hiddenDropped = 0
 	u.drawLocked()
 }
 
@@ -282,7 +333,14 @@ func (u *UI) Run() {
 			continue
 		}
 
+		// Anything but another Tab ends a completion-cycling session.
+		if r != '\t' {
+			u.compActive = false
+		}
+
 		switch r {
+		case '\t':
+			u.complete()
 		case '\r', '\n':
 			u.commit()
 		case 3: // Ctrl-C
@@ -379,6 +437,72 @@ func (u *UI) deleteWord() {
 	u.cur = i
 	u.drawLocked()
 	u.mu.Unlock()
+}
+
+// ---- tab completion ----------------------------------------------------------
+
+// complete implements Tab: it completes the word before the cursor via the
+// Completer callback, and cycles through the candidates on repeated presses.
+// Commands complete with a trailing space, a nick at the start of the line
+// with ": " (the IRC addressing convention); suffixes are only added when the
+// cursor is at the end of the line, so completing mid-sentence stays clean.
+// All completion state lives in the Run goroutine; only buf edits take the
+// lock.
+func (u *UI) complete() {
+	if u.Completer == nil {
+		return
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
+	if u.compActive && len(u.compCands) > 0 {
+		u.compIdx = (u.compIdx + 1) % len(u.compCands)
+		u.applyCompletionLocked()
+		return
+	}
+
+	start := u.cur
+	for start > 0 && u.buf[start-1] != ' ' {
+		start--
+	}
+	if start == u.cur {
+		return // nothing before the cursor to complete
+	}
+	prefix := string(u.buf[start:u.cur])
+	cands := u.Completer(prefix, start == 0)
+	if len(cands) == 0 {
+		return
+	}
+
+	suffix := ""
+	if u.cur == len(u.buf) { // only pad when completing at the end of the line
+		if strings.HasPrefix(prefix, "/") {
+			suffix = " "
+		} else if start == 0 {
+			suffix = ": "
+		} else {
+			suffix = " "
+		}
+	}
+	u.compActive = true
+	u.compCands = cands
+	u.compIdx = 0
+	u.compStart = start
+	u.compEnd = u.cur
+	u.compSuffix = suffix
+	u.applyCompletionLocked()
+}
+
+// applyCompletionLocked replaces the current completion region with the
+// selected candidate (plus suffix) and repaints. Caller holds mu.
+func (u *UI) applyCompletionLocked() {
+	repl := []rune(u.compCands[u.compIdx] + u.compSuffix)
+	tail := append([]rune(nil), u.buf[u.compEnd:]...)
+	u.buf = append(u.buf[:u.compStart], repl...)
+	u.buf = append(u.buf, tail...)
+	u.compEnd = u.compStart + len(repl)
+	u.cur = u.compEnd
+	u.drawLocked()
 }
 
 func (u *UI) setLine(rs []rune) {

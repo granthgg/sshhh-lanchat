@@ -16,12 +16,12 @@ with the same **room** and **passphrase** is in the same conversation, like
 tuning a walkie-talkie to a channel.
 
 ```
-  lanchat 2.2.0 — ephemeral encrypted LAN chat
+  lanchat 2.3.0 — ephemeral encrypted LAN chat
   ────────────────────────────────────────────────────────────────
   room   "lobby" · OPEN — anyone on this Wi-Fi can read it
   you    "granth" · rename with /nick <name>
   send   type a message and press Enter — the room sees it live
-  keys   /help · /who · /clear · /quit · Ctrl-B = instant hide
+  keys   /help · /quit · Tab = complete · Ctrl-B = instant hide
   saved  nothing — messages exist only while the window is open
   ────────────────────────────────────────────────────────────────
   tip: add -k "secret" to go private — share room + passphrase
@@ -207,7 +207,13 @@ hand them the binary directly over AirDrop / USB / Slack.)
 | `/clear` | clear the screen |
 | `/boss` | hide (fake build output) |
 | `/quit` | leave |
+| **Tab** | **complete** nicknames and commands — press again to cycle matches |
 | **Ctrl-B** | **instant boss key** — hide immediately, any key restores |
+
+`Tab` on `al` becomes `alice: ` (names come from who's in the room right now);
+`/n<Tab>` becomes `/nick `. When someone writes **your name**, the line is
+highlighted and your terminal bells so you don't miss it — disable the bell
+with `-no-bell` (stealth mode never bells).
 
 Editing keys: arrows (move / history), Home/End, Ctrl-A/E, Ctrl-U (clear line),
 Ctrl-W (delete word), Ctrl-L (clear screen), Backspace/Delete.
@@ -226,6 +232,7 @@ Ctrl-W (delete word), Ctrl-L (clear screen), Backspace/Delete.
 | `-stealth` | Disguise the prompt as a shell `$ ` | off |
 | `-prompt <str>` | Custom input prompt | `» ` |
 | `-no-broadcast` | Disable the broadcast fallback | off |
+| `-no-bell` | Don't ring the terminal bell when your name is mentioned | off |
 | `-version` | Print version | |
 
 > **Passphrases:** prefer `-ask` or the `CHAT_KEY` environment variable over
@@ -235,12 +242,17 @@ Ctrl-W (delete word), Ctrl-L (clear screen), Backspace/Delete.
 ## Stealth: the boss key
 
 Press **Ctrl-B** and the screen is instantly replaced with plausible build
-output, ending at a shell prompt. While hidden, **incoming messages are
-suppressed** (not just scrolled off) so nothing pops up to give you away — you're
-told how many you missed when you come back. Any keystroke restores the chat.
-`/boss` does the same thing if you prefer a command. Run with `-stealth` to make
-the normal prompt look like a shell too — in stealth mode chat lines also drop
-the bold/gutter styling and render as flat, logger-style output.
+output, ending at a shell prompt. While hidden, **nothing pops up and nothing
+beeps** to give you away — incoming messages are held in memory (never on
+disk), and **replayed the moment you come back**, so a quick hide no longer
+costs you the conversation. Any keystroke restores the chat. `/boss` does the
+same thing if you prefer a command. Run with `-stealth` to make the normal
+prompt look like a shell too — in stealth mode chat lines also drop the
+bold/gutter styling and render as flat, logger-style output, and the mention
+bell stays off.
+
+The replay buffer keeps the last 500 lines of a hide; an hours-long hide shows
+the most recent 500 and says how many older ones were dropped.
 
 ## How it works
 
@@ -371,8 +383,8 @@ dependencies are the official `golang.org/x/{net,term,sys}` packages for
 cross-platform multicast and terminal handling. See
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a deeper tour.
 
-Releases are cut by pushing a version tag (`git tag v2.2.0 && git push origin
-v2.2.0`); CI cross-compiles every target, generates `checksums.txt`, and
+Releases are cut by pushing a version tag (`git tag v2.3.0 && git push origin
+v2.3.0`); CI cross-compiles every target, generates `checksums.txt`, and
 attaches everything to a GitHub Release automatically. See
 [docs/RELEASING.md](docs/RELEASING.md) for the release process and the
 code-signing / notarization roadmap that would remove the manual-download

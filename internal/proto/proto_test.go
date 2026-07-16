@@ -60,6 +60,32 @@ func TestClampBytes(t *testing.T) {
 	}
 }
 
+// Mentions matches whole words only, case-insensitively, with optional '@'.
+func TestMentions(t *testing.T) {
+	cases := []struct {
+		text, nick string
+		want       bool
+	}{
+		{"hey granth, ping", "granth", true},
+		{"hey Granth!", "granth", true},            // case-insensitive
+		{"@granth are you there", "granth", true},  // @-mention
+		{"granth", "granth", true},                 // whole message is the nick
+		{"granth: hi", "granth", true},             // addressing via completion
+		{"granthology is a word", "granth", false}, // inside a longer word
+		{"malice", "alice", false},                 // suffix of a longer word
+		{"is al-ice here", "al-ice", true},         // hyphen is a word rune
+		{"héllo wörld", "wörld", true},             // multibyte nicks
+		{"no mention here", "granth", false},
+		{"", "granth", false},
+		{"anything", "", false}, // empty nick never matches
+	}
+	for _, tc := range cases {
+		if got := Mentions(tc.text, tc.nick); got != tc.want {
+			t.Errorf("Mentions(%q, %q) = %v, want %v", tc.text, tc.nick, got, tc.want)
+		}
+	}
+}
+
 // A pathological body (every byte needs JSON escaping) must still encode
 // within budget, stay valid JSON, and keep a usable prefix of the message.
 func TestEncodeBoundedFitsBudget(t *testing.T) {

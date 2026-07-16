@@ -24,10 +24,11 @@ cmd/lanchat/          CLI entry point — flags, usage, key resolution, wiring
 internal/
   chat/               composition root: builds a session and runs the loops
   crypto/             key derivation + AES-256-GCM wire framing
-  proto/              the Msg record, sequence numbers, dedup, bounded encoding
+  proto/              Msg record, seq numbers, dedup, bounded encoding, mentions
   roster/             presence tracking (who is here right now)
   transport/          UDP multicast + directed broadcast, interface tracking
-  ui/                 raw-mode line editor, thread-safe printer, boss-key decoy
+  ui/                 raw-mode line editor with Tab completion, thread-safe
+                      printer, mention alerts, boss-key decoy + replay buffer
 ```
 
 The dependency direction is strictly one-way — nothing in `internal/` imports
@@ -160,11 +161,14 @@ Unit tests live beside the code they cover:
 - `internal/crypto` — seal/open round-trip, and the critical property that a
   frame for one room/passphrase cannot be opened under another.
 - `internal/proto` — dedup semantics, the control-character sanitizer,
-  rune-boundary-safe byte clamping, and the size-bounded encoder (budget,
-  validity, no HTML escaping).
+  rune-boundary-safe byte clamping, the size-bounded encoder (budget,
+  validity, no HTML escaping), and whole-word mention matching.
 - `internal/roster` — join/rename/leave semantics and stable ordering.
 - `internal/transport` — deterministic room→group mapping, reserved-group
   avoidance, and directed-broadcast address math.
+- `internal/ui` — Tab-completion mechanics (suffixes, cycling, mid-line
+  tails) and the boss-mode replay buffer (held lines, silence, cap).
+- `internal/chat` — completion filtering and command-candidate rules.
 
 ```sh
 go test -race ./...

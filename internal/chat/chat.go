@@ -37,14 +37,19 @@ type Config struct {
 	Prompt     string // input prompt string
 	Broadcast  bool   // send directed-broadcast copies alongside multicast
 	TTL        int    // multicast TTL (1 = stay on the local segment)
+	Bell       bool   // terminal bell when someone mentions your nick
 	Version    string // version string shown in the banner
 }
 
 // Client is one running chat session.
 type Client struct {
 	id   string
-	nick string
 	room string
+
+	// nick is written by /nick on the input goroutine and read by the
+	// presence and receive goroutines; always use currentNick/setNick.
+	nickMu sync.RWMutex
+	nick   string
 
 	tr  *transport.Transport
 	ui  *ui.UI
@@ -82,11 +87,18 @@ func Run(cfg Config) error {
 	}
 
 	c := &Client{
-		id:        proto.NewInstanceID(),
-		nick:      cfg.Nick,
-		room:      cfg.Room,
-		tr:        tr,
-		ui:        ui.New(cfg.Prompt, cfg.Color, cfg.Stealth),
+		id:   proto.NewInstanceID(),
+		nick: cfg.Nick,
+		room: cfg.Room,
+		tr:   tr,
+		ui: ui.New(ui.Options{
+			Prompt:   cfg.Prompt,
+			Color:    cfg.Color,
+			LogStyle: cfg.Stealth,
+			// Stealth never bells: a beep draws exactly the attention the
+			// mode exists to avoid.
+			Bell: cfg.Bell && !cfg.Stealth,
+		}),
 		ros:       roster.New(),
 		dd:        proto.NewDedup(),
 		aead:      aead,
@@ -95,6 +107,7 @@ func Run(cfg Config) error {
 		broadcast: cfg.Broadcast,
 		version:   cfg.Version,
 	}
+	c.ui.Completer = c.completions
 
 	c.installSignals()
 	c.banner(cfg.Passphrase != "")
@@ -115,6 +128,48 @@ func Run(cfg Config) error {
 	return nil
 }
 
+func (c *Client) currentNick() string {
+	c.nickMu.RLock()
+	defer c.nickMu.RUnlock()
+	return c.nick
+}
+
+func (c *Client) setNick(n string) {
+	c.nickMu.Lock()
+	c.nick = n
+	c.nickMu.Unlock()
+}
+
+// commandNames are the canonical slash commands offered by Tab completion
+// (aliases like /exit and /names still work, they just aren't suggested).
+var commandNames = []string{"/boss", "/clear", "/help", "/me", "/nick", "/quit", "/who"}
+
+// completions is the UI's Tab-completion source: slash commands at the start
+// of the line, and the nicknames currently in the room anywhere.
+func (c *Client) completions(word string, lineStart bool) []string {
+	if strings.HasPrefix(word, "/") {
+		if !lineStart {
+			return nil
+		}
+		return filterPrefixFold(commandNames, word)
+	}
+	return filterPrefixFold(c.ros.List(), word)
+}
+
+// filterPrefixFold returns the entries of list that start with prefix,
+// compared case-insensitively and rune-safely.
+func filterPrefixFold(list []string, prefix string) []string {
+	pr := []rune(prefix)
+	var out []string
+	for _, s := range list {
+		sr := []rune(s)
+		if len(sr) >= len(pr) && strings.EqualFold(string(sr[:len(pr)]), prefix) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // handleLine processes one line of input; it returns true to quit.
 func (c *Client) handleLine(line string) bool {
 	line = strings.TrimRight(line, "\r\n")
@@ -125,7 +180,7 @@ func (c *Client) handleLine(line string) bool {
 		return c.command(line)
 	}
 	text := clampBody(line)
-	c.ui.Chat(c.nick, text) // echo locally, exactly what will be sent
+	c.ui.Chat(c.currentNick(), text, false) // echo locally, exactly what will be sent
 	c.send(proto.TypeMsg, text)
 	return false
 }
@@ -152,9 +207,9 @@ func (c *Client) command(line string) (quit bool) {
 			c.ui.System("that name is empty after removing control characters")
 			return false
 		}
-		old := c.nick
-		c.nick = newNick
-		c.ui.System(old + " is now " + c.nick)
+		old := c.currentNick()
+		c.setNick(newNick)
+		c.ui.System(old + " is now " + newNick)
 		c.send(proto.TypeJoin, "") // re-announce under the new name
 	case "/me":
 		if len(fields) < 2 {
@@ -162,7 +217,7 @@ func (c *Client) command(line string) (quit bool) {
 			return false
 		}
 		text := clampBody(strings.TrimSpace(line[len("/me"):]))
-		c.ui.Action(c.nick, text)
+		c.ui.Action(c.currentNick(), text, false)
 		c.send(proto.TypeMe, text)
 	case "/who", "/names":
 		names := c.ros.List()
@@ -176,7 +231,8 @@ func (c *Client) command(line string) (quit bool) {
 	case "/boss":
 		c.ui.ToggleBoss()
 	case "/help", "/?":
-		c.ui.System("commands: /who  /nick <name>  /me <action>  /clear  /boss  /quit   (Ctrl-B = instant hide)")
+		c.ui.System("commands: /who  /nick <name>  /me <action>  /clear  /boss  /quit")
+		c.ui.System("keys: Tab completes names & commands (repeat to cycle) · Ctrl-B = instant hide")
 	default:
 		c.ui.System("unknown command " + fields[0] + " — try /help")
 	}
@@ -186,7 +242,7 @@ func (c *Client) command(line string) (quit bool) {
 // ---- networking loops ------------------------------------------------------
 
 func (c *Client) send(t, body string) {
-	m := proto.Msg{T: t, ID: c.id, N: c.nick, S: c.seq.Next(), B: body}
+	m := proto.Msg{T: t, ID: c.id, N: c.currentNick(), S: c.seq.Next(), B: body}
 	raw, err := m.EncodeBounded(proto.MaxRawBytes)
 	if err != nil {
 		return
@@ -266,9 +322,11 @@ func (c *Client) recvLoop() {
 
 		switch m.T {
 		case proto.TypeMsg:
-			c.ui.Chat(m.N, proto.ClampRunes(proto.Sanitize(m.B), proto.MaxBodyRunes))
+			body := proto.ClampRunes(proto.Sanitize(m.B), proto.MaxBodyRunes)
+			c.ui.Chat(m.N, body, proto.Mentions(body, c.currentNick()))
 		case proto.TypeMe:
-			c.ui.Action(m.N, proto.ClampRunes(proto.Sanitize(m.B), proto.MaxBodyRunes))
+			body := proto.ClampRunes(proto.Sanitize(m.B), proto.MaxBodyRunes)
+			c.ui.Action(m.N, body, proto.Mentions(body, c.currentNick()))
 		case proto.TypeLeave:
 			if nick, ok := c.ros.Leave(m.ID); ok {
 				c.ui.System("← " + nick + " left")
@@ -371,7 +429,7 @@ func (s style) yellow(t string) string { return s.wrap("33", t) }
 // quiet one-liner instead.
 func (c *Client) banner(private bool) {
 	if c.stealth {
-		c.ui.System(fmt.Sprintf("room %q as %q — type to chat, /quit to leave", c.room, c.nick))
+		c.ui.System(fmt.Sprintf("room %q as %q — type to chat, /quit to leave", c.room, c.currentNick()))
 		if !private {
 			c.ui.System(`open room — anyone on this Wi-Fi can read it (-k "secret" makes it private)`)
 		}
@@ -402,9 +460,9 @@ func (c *Client) banner(private bool) {
 	} else {
 		row("room", fmt.Sprintf("%q · ", c.room)+s.yellow("OPEN")+" — anyone on this Wi-Fi can read it")
 	}
-	row("you", fmt.Sprintf("%q · rename with /nick <name>", c.nick))
+	row("you", fmt.Sprintf("%q · rename with /nick <name>", c.currentNick()))
 	row("send", "type a message and press Enter — the room sees it live")
-	row("keys", "/help · /who · /clear · /quit · Ctrl-B = instant hide")
+	row("keys", "/help · /quit · Tab = complete · Ctrl-B = instant hide")
 	row("saved", "nothing — messages exist only while the window is open")
 	if c.tr.Joined() == 0 {
 		if c.broadcast {
