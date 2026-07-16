@@ -5,7 +5,10 @@ package chat
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"math/rand/v2"
+	"net"
 	"os"
 	"os/signal"
 	"strings"
@@ -32,7 +35,8 @@ type Config struct {
 	Color      bool   // colorize nicknames
 	Stealth    bool   // quieter banner and shell-like prompt
 	Prompt     string // input prompt string
-	Broadcast  bool   // send a broadcast copy alongside multicast
+	Broadcast  bool   // send directed-broadcast copies alongside multicast
+	TTL        int    // multicast TTL (1 = stay on the local segment)
 	Version    string // version string shown in the banner
 }
 
@@ -52,36 +56,44 @@ type Client struct {
 	quit chan struct{}
 	done sync.Once
 
-	stealth bool
-	version string
+	stealth   bool
+	broadcast bool
+	version   string
 }
 
-// Run builds a session from cfg and blocks until the user quits or input ends.
-// It returns an error only for setup failures (bad key, port in use); once the
-// session is live it exits the process on shutdown.
+// Run builds a session from cfg and blocks until the user quits, input ends,
+// or a shutdown signal arrives. It returns an error only for setup failures
+// (bad key, port in use); a live session always exits cleanly through the
+// same idempotent shutdown path.
 func Run(cfg Config) error {
 	aead, err := crypto.New(cfg.Room, cfg.Passphrase)
 	if err != nil {
 		return fmt.Errorf("crypto init: %w", err)
 	}
 
-	tr, err := transport.Open(cfg.Room, cfg.Iface, cfg.Broadcast)
+	tr, err := transport.Open(transport.Options{
+		Room:      cfg.Room,
+		Iface:     cfg.Iface,
+		Broadcast: cfg.Broadcast,
+		TTL:       cfg.TTL,
+	})
 	if err != nil {
 		return fmt.Errorf("%w\n(is another program using the port, or is the network down?)", err)
 	}
 
 	c := &Client{
-		id:      proto.NewInstanceID(),
-		nick:    cfg.Nick,
-		room:    cfg.Room,
-		tr:      tr,
-		ui:      ui.New(cfg.Prompt, cfg.Color),
-		ros:     roster.New(),
-		dd:      proto.NewDedup(),
-		aead:    aead,
-		quit:    make(chan struct{}),
-		stealth: cfg.Stealth,
-		version: cfg.Version,
+		id:        proto.NewInstanceID(),
+		nick:      cfg.Nick,
+		room:      cfg.Room,
+		tr:        tr,
+		ui:        ui.New(cfg.Prompt, cfg.Color, cfg.Stealth),
+		ros:       roster.New(),
+		dd:        proto.NewDedup(),
+		aead:      aead,
+		quit:      make(chan struct{}),
+		stealth:   cfg.Stealth,
+		broadcast: cfg.Broadcast,
+		version:   cfg.Version,
 	}
 
 	c.installSignals()
@@ -112,10 +124,17 @@ func (c *Client) handleLine(line string) bool {
 	if strings.HasPrefix(line, "/") {
 		return c.command(line)
 	}
-	text := proto.ClampRunes(proto.Sanitize(line), proto.MaxBodyRunes)
-	c.ui.Chat(c.nick, text) // echo locally right away
+	text := clampBody(line)
+	c.ui.Chat(c.nick, text) // echo locally, exactly what will be sent
 	c.send(proto.TypeMsg, text)
 	return false
+}
+
+// clampBody sanitizes outgoing text and enforces both caps: runes for what a
+// line may hold, bytes so the encrypted frame fits one unfragmented datagram
+// (fragments are the first thing flaky networks drop).
+func clampBody(s string) string {
+	return proto.ClampBytes(proto.ClampRunes(proto.Sanitize(s), proto.MaxBodyRunes), proto.MaxBodyBytes)
 }
 
 func (c *Client) command(line string) (quit bool) {
@@ -142,7 +161,7 @@ func (c *Client) command(line string) (quit bool) {
 			c.ui.System("usage: /me <action>")
 			return false
 		}
-		text := proto.ClampRunes(proto.Sanitize(strings.TrimSpace(line[len("/me"):])), proto.MaxBodyRunes)
+		text := clampBody(strings.TrimSpace(line[len("/me"):]))
 		c.ui.Action(c.nick, text)
 		c.send(proto.TypeMe, text)
 	case "/who", "/names":
@@ -168,7 +187,7 @@ func (c *Client) command(line string) (quit bool) {
 
 func (c *Client) send(t, body string) {
 	m := proto.Msg{T: t, ID: c.id, N: c.nick, S: c.seq.Next(), B: body}
-	raw, err := json.Marshal(m)
+	raw, err := m.EncodeBounded(proto.MaxRawBytes)
 	if err != nil {
 		return
 	}
@@ -180,7 +199,11 @@ func (c *Client) send(t, body string) {
 }
 
 func (c *Client) recvLoop() {
-	buf := make([]byte, 2048)
+	// 64 KB: the largest possible UDP datagram. Our own frames are bounded far
+	// below the MTU, but a too-small buffer would silently truncate any
+	// oversized frame (e.g. from an older build) and turn it into a decrypt
+	// failure — a message lost with no trace.
+	buf := make([]byte, 64*1024)
 	for {
 		select {
 		case <-c.quit:
@@ -189,12 +212,16 @@ func (c *Client) recvLoop() {
 		}
 		n, src, err := c.tr.Read(buf)
 		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
 			select {
 			case <-c.quit:
 				return
 			default:
-				continue
 			}
+			time.Sleep(50 * time.Millisecond) // don't spin on a persistent error
+			continue
 		}
 		if debugOn {
 			fmt.Fprintf(os.Stderr, "[dbg] recv %d bytes from %v\n", n, src)
@@ -221,15 +248,27 @@ func (c *Client) recvLoop() {
 		if m.N == "" {
 			m.N = "?"
 		}
-		if c.ros.Seen(m.ID, m.N) && m.T != proto.TypeLeave {
-			c.ui.System("→ " + m.N + " is here")
+		prev, isNew := c.ros.Seen(m.ID, m.N)
+		if m.T != proto.TypeLeave {
+			switch {
+			case isNew:
+				c.ui.System("→ " + m.N + " is here")
+			case prev != m.N:
+				c.ui.System(prev + " is now " + m.N)
+			}
+		}
+		if m.T == proto.TypeJoin {
+			// Answer a newcomer's join with one delayed ping so their roster
+			// (and /who) fills within ~½s instead of waiting for the next 4s
+			// heartbeat. The jitter keeps a full room from replying at once.
+			c.pongSoon()
 		}
 
 		switch m.T {
 		case proto.TypeMsg:
-			c.ui.Chat(m.N, proto.Sanitize(m.B))
+			c.ui.Chat(m.N, proto.ClampRunes(proto.Sanitize(m.B), proto.MaxBodyRunes))
 		case proto.TypeMe:
-			c.ui.Action(m.N, proto.Sanitize(m.B))
+			c.ui.Action(m.N, proto.ClampRunes(proto.Sanitize(m.B), proto.MaxBodyRunes))
 		case proto.TypeLeave:
 			if nick, ok := c.ros.Leave(m.ID); ok {
 				c.ui.System("← " + nick + " left")
@@ -238,6 +277,17 @@ func (c *Client) recvLoop() {
 			// presence already recorded above
 		}
 	}
+}
+
+func (c *Client) pongSoon() {
+	delay := time.Duration(100+rand.IntN(300)) * time.Millisecond
+	go func() {
+		select {
+		case <-c.quit:
+		case <-time.After(delay):
+			c.send(proto.TypePing, "")
+		}
+	}()
 }
 
 func (c *Client) presenceLoop() {
@@ -270,15 +320,22 @@ func (c *Client) expireLoop() {
 
 // ---- lifecycle -------------------------------------------------------------
 
+// installSignals turns SIGINT/SIGTERM/SIGHUP into a graceful shutdown. SIGHUP
+// covers the terminal window being closed, so peers get a "left" immediately
+// rather than a timeout 13 seconds later.
 func (c *Client) installSignals() {
 	ch := make(chan os.Signal, 1)
-	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	go func() {
 		<-ch
 		c.shutdown()
+		os.Exit(0)
 	}()
 }
 
+// shutdown broadcasts a best-effort goodbye and releases the terminal and the
+// socket. It is idempotent and safe to call from any goroutine; it does not
+// exit the process, so Run can return normally.
 func (c *Client) shutdown() {
 	c.done.Do(func() {
 		close(c.quit)
@@ -287,29 +344,79 @@ func (c *Client) shutdown() {
 		c.ui.Restore()
 		_ = c.tr.Close()
 		fmt.Fprintln(os.Stderr) // land the shell prompt on a fresh line
-		os.Exit(0)
 	})
 }
 
+// ---- banner ------------------------------------------------------------
+
+// style wraps text in ANSI SGR codes when the UI is interactive, and leaves it
+// untouched when output is piped (tests, CI), so captured text stays plain.
+type style bool
+
+func (s style) wrap(code, t string) string {
+	if !s {
+		return t
+	}
+	return "\x1b[" + code + "m" + t + "\x1b[0m"
+}
+
+func (s style) bold(t string) string   { return s.wrap("1", t) }
+func (s style) dim(t string) string    { return s.wrap("2", t) }
+func (s style) green(t string) string  { return s.wrap("32", t) }
+func (s style) yellow(t string) string { return s.wrap("33", t) }
+
+// banner prints the welcome header. Unlike chat traffic it skips the
+// timestamp/name columns: a boxed, labeled layout reads as a designed start
+// screen rather than stray log lines. In stealth mode it stays a deliberately
+// quiet one-liner instead.
 func (c *Client) banner(private bool) {
 	if c.stealth {
 		c.ui.System(fmt.Sprintf("room %q as %q — type to chat, /quit to leave", c.room, c.nick))
-	} else {
-		c.ui.System("welcome to lanchat " + c.version)
-		c.ui.System(fmt.Sprintf("you're in room %q as %q", c.room, c.nick))
-		c.ui.System("→ type a message and press Enter to send it")
-		c.ui.System("→ everyone on this Wi-Fi in the same room sees it in real time")
-		c.ui.System("→ /help = commands   /nick = rename   /quit = leave   Ctrl-B = quick-hide")
+		if !private {
+			c.ui.System(`open room — anyone on this Wi-Fi can read it (-k "secret" makes it private)`)
+		}
+		if c.tr.Joined() == 0 && !c.broadcast {
+			c.ui.System("warning: no multicast and -no-broadcast is set — you may not reach anyone")
+		}
+		return
 	}
+
+	s := style(c.ui.Interactive())
+	width := c.ui.Width() - 2
+	if width > 64 {
+		width = 64
+	}
+	if width < 24 {
+		width = 24
+	}
+	rule := s.dim(strings.Repeat("─", width))
+	row := func(label, text string) {
+		c.ui.Plain("  " + s.dim(fmt.Sprintf("%-5s", label)) + "  " + text)
+	}
+
+	c.ui.Plain("")
+	c.ui.Plain("  " + s.bold("lanchat "+c.version) + s.dim(" — ephemeral encrypted LAN chat"))
+	c.ui.Plain("  " + rule)
 	if private {
-		c.ui.System("this room is PRIVATE — encrypted, only people with the passphrase can read it")
+		row("room", fmt.Sprintf("%q · ", c.room)+s.green("PRIVATE")+" — encrypted; passphrase holders only")
 	} else {
-		c.ui.System(`this room is OPEN — anyone on this Wi-Fi can read it (add -k "secret" to make it private)`)
+		row("room", fmt.Sprintf("%q · ", c.room)+s.yellow("OPEN")+" — anyone on this Wi-Fi can read it")
 	}
+	row("you", fmt.Sprintf("%q · rename with /nick <name>", c.nick))
+	row("send", "type a message and press Enter — the room sees it live")
+	row("keys", "/help · /who · /clear · /quit · Ctrl-B = instant hide")
+	row("saved", "nothing — messages exist only while the window is open")
 	if c.tr.Joined() == 0 {
-		c.ui.System("note: couldn't join multicast; using broadcast fallback (some networks block this)")
+		if c.broadcast {
+			row("note", s.yellow("couldn't join multicast — using broadcast fallback"))
+		} else {
+			row("note", s.yellow("no multicast + -no-broadcast — you may be unreachable"))
+		}
 	}
-	if !c.stealth {
-		c.ui.System("nothing is saved — you only see messages sent while you're here. waiting…")
+	c.ui.Plain("  " + rule)
+	if !private {
+		c.ui.Plain(s.dim(`  tip: add -k "secret" to go private — share room + passphrase`))
 	}
+	c.ui.Plain(s.dim("  waiting for messages…"))
+	c.ui.Plain("")
 }

@@ -16,15 +16,25 @@ with the same **room** and **passphrase** is in the same conversation, like
 tuning a walkie-talkie to a channel.
 
 ```
-welcome to lanchat 2.1.1
-you're in room "lobby" as "granth"
-→ type a message and press Enter to send it
-→ everyone on this Wi-Fi in the same room sees it in real time
-→ /help = commands   /nick = rename   /quit = leave   Ctrl-B = quick-hide
-» hello, anyone around?
-14:22:04 alice        hey! yes
+  lanchat 2.2.0 — ephemeral encrypted LAN chat
+  ────────────────────────────────────────────────────────────────
+  room   "lobby" · OPEN — anyone on this Wi-Fi can read it
+  you    "granth" · rename with /nick <name>
+  send   type a message and press Enter — the room sees it live
+  keys   /help · /who · /clear · /quit · Ctrl-B = instant hide
+  saved  nothing — messages exist only while the window is open
+  ────────────────────────────────────────────────────────────────
+  tip: add -k "secret" to go private — share room + passphrase
+  waiting for messages…
+
+14:22:03       granth │ hello, anyone around?
+14:22:04        alice │ hey! yes
 » ▏
 ```
+
+Names sit right-aligned and bold against a dimmed `│` gutter, so who-said-what
+is readable at a glance even without `-color` (which additionally gives every
+person a stable color).
 
 ## Contents
 
@@ -166,6 +176,7 @@ Ctrl-W (delete word), Ctrl-L (clear screen), Backspace/Delete.
 | `-k`, `-key <phrase>` | Room passphrase (see note) | none (open room) |
 | `-ask` | Prompt for the passphrase without echoing it | off |
 | `-iface <name>` | Pin a network interface | auto-detect |
+| `-ttl <n>` | Multicast TTL; raise above 1 only on LANs that route multicast between subnets | `1` |
 | `-color` | Colorize nicknames | off |
 | `-stealth` | Disguise the prompt as a shell `$ ` | off |
 | `-prompt <str>` | Custom input prompt | `» ` |
@@ -183,13 +194,13 @@ output, ending at a shell prompt. While hidden, **incoming messages are
 suppressed** (not just scrolled off) so nothing pops up to give you away — you're
 told how many you missed when you come back. Any keystroke restores the chat.
 `/boss` does the same thing if you prefer a command. Run with `-stealth` to make
-the normal prompt look like a shell too.
+the normal prompt look like a shell too — in stealth mode chat lines also drop
+the bold/gutter styling and render as flat, logger-style output.
 
 ## How it works
 
 There is **no host and no server**. Every instance sends and receives on a UDP
-**multicast** group derived from the room name (with a broadcast copy as a
-fallback for networks that drop multicast). That single choice gives you:
+**multicast** group derived from the room name. That single choice gives you:
 
 - **Nothing to keep running.** Anyone can join or leave at any time; the
   conversation never "goes down" because there's no one holding it up.
@@ -200,8 +211,26 @@ fallback for networks that drop multicast). That single choice gives you:
 - **Privacy on the wire.** Every datagram is encrypted with AES-256-GCM using a
   key derived from your room + passphrase (PBKDF2). People without the
   passphrase — including whoever runs Wireshark on the office network — see only
-  ciphertext. Traffic uses multicast **TTL 1**, so it never leaves the local
-  segment.
+  ciphertext. Traffic uses multicast **TTL 1** by default, so it never leaves
+  the local segment.
+
+Real-world networks get in the way of naive multicast, so delivery is layered
+to work on messy LANs — office Wi-Fi, mesh networks, machines with several
+network interfaces:
+
+- Multicast is sent on **every usable interface**, so a machine on both
+  Ethernet and Wi-Fi reaches peers on either segment.
+- A **directed-broadcast** copy (e.g. `192.168.1.255`) is sent per subnet as a
+  fallback for networks that filter multicast (common on corporate Wi-Fi with
+  IGMP snooping). Duplicates are de-duplicated automatically.
+- Interfaces are **re-scanned every 20 s**: roaming between access points,
+  waking from sleep, or switching networks re-establishes multicast membership
+  without a restart.
+- **VPN tunnels are skipped** during auto-detection so chat traffic stays on
+  the LAN instead of disappearing into the tunnel (pin one explicitly with
+  `-iface` to override).
+- Messages are size-bounded so a frame **never fragments** — fragments are the
+  first thing unreliable Wi-Fi gear drops.
 
 For the wire format, package layout, and threading model, see
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
@@ -242,18 +271,30 @@ run it by full path once (e.g. `/opt/homebrew/bin/lanchat` or
 3. **"AP isolation" / guest Wi-Fi.** Many guest and public networks block clients
    from talking to each other. Nothing on the device can fix that — use a trusted
    network.
-4. **VPN.** An active VPN can capture the default route; pin your real interface
-   with `-iface en0` (find it via `ifconfig` / `ip addr` / `ipconfig`).
-5. **See what's arriving:** run with `CHAT_DEBUG=1` to print received-packet
+4. **Multicast-filtering office networks.** Corporate Wi-Fi often filters
+   multicast; lanchat detects this ("couldn't join multicast" in the banner) and
+   automatically falls back to directed broadcast per subnet. If your network
+   blocks *both*, that's AP isolation in practice — see point 3.
+5. **Different subnets behind different routers.** A campus "same Wi-Fi" can
+   actually be several routed subnets. By default traffic stays on one segment
+   (TTL 1, a privacy feature). If — and only if — your network routes multicast
+   between subnets, `-ttl 4` lets frames cross.
+6. **VPN.** Auto-detection skips VPN tunnels, so an active VPN no longer
+   swallows chat traffic. If you *want* to chat over a tunnel that supports
+   multicast, pin it explicitly with `-iface utun3` (find names via
+   `ifconfig` / `ip addr` / `ipconfig`).
+7. **See what's arriving:** run with `CHAT_DEBUG=1` to print received-packet
    diagnostics to stderr.
 
 ## Limitations (by design)
 
 - **Best-effort delivery.** UDP can drop a packet on a congested network; a
   missed line is simply missed (it matches the "ephemeral, no storage" model).
-  Messages are sent over both multicast and broadcast to make loss rare.
-- **Single LAN segment.** TTL 1 means it won't cross routers/subnets. That's
-  intentional — it's a *local* chat.
+  Messages are sent over multicast on every interface plus a broadcast copy per
+  subnet to make loss rare.
+- **Single LAN segment by default.** TTL 1 means it won't cross routers/subnets.
+  That's intentional — it's a *local* chat (see `-ttl` if your network routes
+  multicast).
 - **Multiple instances on one machine (macOS):** works, but which window receives
   a given looped-back packet can be unreliable due to how macOS load-balances a
   shared socket. Normal use — one instance per machine — is unaffected.
@@ -279,15 +320,14 @@ The project follows the standard Go layout:
 | `internal/roster/` | presence tracking |
 | `internal/transport/` | UDP multicast + broadcast, interface selection, sockopts |
 | `internal/ui/` | raw-mode line editor, thread-safe printer, boss-key decoy |
-| `legacy/tchat.go` | the original TCP-relay prototype, kept for reference |
 
 Zero third-party crypto — encryption is Go's standard library. The only
 dependencies are the official `golang.org/x/{net,term,sys}` packages for
 cross-platform multicast and terminal handling. See
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a deeper tour.
 
-Releases are cut by pushing a version tag (`git tag v2.1.1 && git push origin
-v2.1.1`); CI cross-compiles every target and attaches the binaries to a GitHub
+Releases are cut by pushing a version tag (`git tag v2.2.0 && git push origin
+v2.2.0`); CI cross-compiles every target and attaches the binaries to a GitHub
 Release automatically.
 
 ## License

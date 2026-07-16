@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +32,7 @@ type UI struct {
 	raw      bool
 	oldState *term.State
 	color    bool
+	logStyle bool // stealth: flat unstyled lines that read as log output
 	prompt   string
 
 	buf     []rune // current input line
@@ -46,16 +48,19 @@ type UI struct {
 	Lines chan string
 }
 
-// New returns a UI bound to stdin/stdout. If stdin is a terminal it switches to
-// raw mode; otherwise it stays in line-buffered mode.
-func New(prompt string, color bool) *UI {
+// New returns a UI bound to stdin/stdout. If stdin is a terminal it switches
+// to raw mode; otherwise it stays in line-buffered mode. logStyle selects the
+// flat, unstyled "log output" line format used by stealth mode, instead of the
+// decorated one (bold right-aligned nicks, dim timestamps, │ gutter).
+func New(prompt string, color, logStyle bool) *UI {
 	u := &UI{
-		out:    os.Stdout,
-		in:     bufio.NewReader(os.Stdin),
-		fd:     int(os.Stdin.Fd()),
-		color:  color,
-		prompt: prompt,
-		Lines:  make(chan string, 16),
+		out:      os.Stdout,
+		in:       bufio.NewReader(os.Stdin),
+		fd:       int(os.Stdin.Fd()),
+		color:    color,
+		logStyle: logStyle,
+		prompt:   prompt,
+		Lines:    make(chan string, 16),
 	}
 	u.histPos = 0
 	if term.IsTerminal(u.fd) {
@@ -67,8 +72,11 @@ func New(prompt string, color bool) *UI {
 	return u
 }
 
-// Restore puts the terminal back the way we found it. Safe to call twice.
+// Restore puts the terminal back the way we found it. Safe to call twice and
+// from any goroutine.
 func (u *UI) Restore() {
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	if u.raw && u.oldState != nil {
 		_ = term.Restore(u.fd, u.oldState)
 		u.oldState = nil
@@ -95,14 +103,42 @@ func (u *UI) emit(line string) {
 }
 
 // drawLocked repaints the input line and positions the cursor. Caller holds mu.
+//
+// The input is windowed to the terminal width so it can never wrap: a wrapped
+// input line would break the redraw ("\r" only returns to the start of the
+// last physical row) and garble the screen on every keystroke. When the line
+// outgrows the window, the view scrolls so the cursor stays visible — the
+// same behavior as readline.
 func (u *UI) drawLocked() {
 	if !u.raw {
 		return
 	}
-	fmt.Fprint(u.out, "\r\x1b[K", u.prompt, string(u.buf))
-	if back := len(u.buf) - u.cur; back > 0 {
+	avail := u.termWidth() - len([]rune(u.prompt)) - 1
+	if avail < 8 {
+		avail = 8
+	}
+	start := 0
+	if u.cur > avail {
+		start = u.cur - avail
+	}
+	end := start + avail
+	if end > len(u.buf) {
+		end = len(u.buf)
+	}
+	fmt.Fprint(u.out, "\r\x1b[K", u.prompt, string(u.buf[start:end]))
+	if back := end - u.cur; back > 0 {
 		fmt.Fprintf(u.out, "\x1b[%dD", back)
 	}
+}
+
+// termWidth returns the current terminal width, defaulting to 80 when it
+// cannot be determined. Queried per redraw, so window resizes self-correct on
+// the next keystroke or message.
+func (u *UI) termWidth() int {
+	if w, _, err := term.GetSize(u.fd); err == nil && w > 0 {
+		return w
+	}
+	return 80
 }
 
 func (u *UI) draw() {
@@ -112,6 +148,25 @@ func (u *UI) draw() {
 }
 
 // ---- display lines ---------------------------------------------------------
+
+// Plain prints one line verbatim, with no timestamp or name column. The
+// startup banner uses it; chat traffic never does.
+func (u *UI) Plain(line string) {
+	u.emit(line)
+}
+
+// Interactive reports whether the UI drives a real terminal in raw mode
+// (false when input is piped, in CI, or under tests). Callers use it to skip
+// ANSI styling when the output may be captured as plain text.
+func (u *UI) Interactive() bool { return u.raw }
+
+// Width returns the terminal width, or 80 when it cannot be determined.
+func (u *UI) Width() int {
+	if u.raw {
+		return u.termWidth()
+	}
+	return 80
+}
 
 // Chat prints a chat line from nick.
 func (u *UI) Chat(nick, text string) {
@@ -128,13 +183,43 @@ func (u *UI) System(text string) {
 	u.emit(u.format("·", text, true))
 }
 
+// nickCol is the fixed display width of the name column.
+const nickCol = 12
+
+// format lays out one display line.
+//
+// Decorated mode (the default) separates metadata from content so names read
+// at a glance even without -color: the timestamp is dimmed, the nick is
+// right-aligned into a fixed column and emphasized (bold, or its hash color
+// with -color), and a dim │ gutter runs between names and messages, forming a
+// clean vertical seam down the screen. System notices are dimmed whole so real
+// chat stands out. Log style (stealth) keeps the flat, unstyled layout that
+// passes for logger output.
 func (u *UI) format(nick, text string, system bool) string {
 	ts := time.Now().Format("15:04:05")
-	name := fmt.Sprintf("%-12s", proto.ClampRunes(nick, 12))
-	if u.color && !system {
-		name = fmt.Sprintf("\x1b[%dm%s\x1b[0m", colorFor(nick), name)
+	name := proto.ClampRunes(nick, nickCol)
+	if u.logStyle {
+		pad := strings.Repeat(" ", nickCol-len([]rune(name)))
+		return ts + " " + name + pad + " " + text
 	}
-	return ts + " " + name + " " + text
+	pad := strings.Repeat(" ", nickCol-len([]rune(name)))
+	if system {
+		return u.sgr("2", ts+" "+pad+name+" │ "+text)
+	}
+	styled := u.sgr("1", name)
+	if u.color {
+		styled = u.sgr(strconv.Itoa(colorFor(nick)), name)
+	}
+	return u.sgr("2", ts) + " " + pad + styled + " " + u.sgr("2", "│") + " " + text
+}
+
+// sgr wraps text in an ANSI SGR attribute when driving a real terminal, and
+// leaves it untouched when output is piped, so captured text stays plain.
+func (u *UI) sgr(code, t string) string {
+	if !u.raw {
+		return t
+	}
+	return "\x1b[" + code + "m" + t + "\x1b[0m"
 }
 
 func colorFor(s string) int {
@@ -238,11 +323,18 @@ func (u *UI) isHidden() bool {
 	return u.hidden
 }
 
+// maxHistory bounds the input history so a long-lived session can't grow
+// memory without limit.
+const maxHistory = 200
+
 func (u *UI) commit() {
 	u.mu.Lock()
 	line := string(u.buf)
 	if t := strings.TrimSpace(line); t != "" {
 		u.history = append(u.history, append([]rune(nil), u.buf...))
+		if len(u.history) > maxHistory {
+			u.history = u.history[len(u.history)-maxHistory:]
+		}
 	}
 	u.histPos = len(u.history)
 	u.buf = u.buf[:0]

@@ -26,7 +26,7 @@ import (
 	"github.com/granthgg/sshhh-lanchat/internal/ui"
 )
 
-const version = "2.1.1"
+const version = "2.2.0"
 
 func main() {
 	ui.EnableVirtualTerminal() // Windows: turn on ANSI + UTF-8; no-op elsewhere
@@ -37,6 +37,7 @@ func main() {
 		key     = flag.String("key", "", "room passphrase (prefer CHAT_KEY env or -ask)")
 		ask     = flag.Bool("ask", false, "prompt for the passphrase without echoing it")
 		iface   = flag.String("iface", "", "network interface to use (default: auto)")
+		ttl     = flag.Int("ttl", 1, "multicast TTL: 1 stays on the local segment; raise only on LANs that route multicast between subnets")
 		color   = flag.Bool("color", false, "colorize nicknames")
 		stealth = flag.Bool("stealth", false, `disguise the prompt as a shell "$ " for a lower profile`)
 		prompt  = flag.String("prompt", "", `input prompt (default "» ", or "$ " with -stealth)`)
@@ -70,15 +71,21 @@ func main() {
 	}
 	nickStr = proto.ClampRunes(nickStr, 24)
 
-	err := chat.Run(chat.Config{
+	passphrase, err := resolveKey(*key, *ask)
+	if err != nil {
+		fatal(err.Error())
+	}
+
+	err = chat.Run(chat.Config{
 		Room:       *room,
 		Nick:       nickStr,
-		Passphrase: resolveKey(*key, *ask),
+		Passphrase: passphrase,
 		Iface:      *iface,
 		Color:      *color,
 		Stealth:    *stealth,
 		Prompt:     promptStr,
 		Broadcast:  !*noBcast,
+		TTL:        *ttl,
 		Version:    version,
 	})
 	if err != nil {
@@ -90,22 +97,26 @@ func main() {
 // interactive no-echo prompt when -ask was given. Passing secrets on the command
 // line is discouraged (they linger in shell history and process lists) so
 // CHAT_KEY or -ask are preferred.
-func resolveKey(flagKey string, ask bool) string {
+//
+// A failed -ask is an error, never a fallback: the user asked for a private
+// room, and silently opening an unencrypted one instead would betray that.
+func resolveKey(flagKey string, ask bool) (string, error) {
 	if flagKey != "" {
-		return flagKey
+		return flagKey, nil
 	}
 	if env := os.Getenv("CHAT_KEY"); env != "" {
-		return env
+		return env, nil
 	}
 	if ask {
 		fmt.Fprint(os.Stderr, "room passphrase: ")
 		b, err := term.ReadPassword(int(os.Stdin.Fd()))
 		fmt.Fprintln(os.Stderr)
-		if err == nil {
-			return strings.TrimSpace(string(b))
+		if err != nil {
+			return "", fmt.Errorf("could not read the passphrase (-ask needs an interactive terminal): %w", err)
 		}
+		return strings.TrimSpace(string(b)), nil
 	}
-	return "" // open room
+	return "", nil // open room
 }
 
 func defaultNick() string {
@@ -135,6 +146,8 @@ flags:
   -k, -key  <phrase> room passphrase (prefer CHAT_KEY env or -ask)
       -ask           prompt for the passphrase without echoing it
       -iface <name>  pin a network interface (default: auto-detect)
+      -ttl <n>       multicast TTL; raise above 1 only on LANs that route
+                     multicast between subnets (default 1)
       -color         colorize nicknames
       -stealth       disguise the prompt as a shell "$ "
       -prompt <str>  custom input prompt

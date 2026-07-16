@@ -29,19 +29,22 @@ type Roster struct {
 // New returns an empty Roster ready for use.
 func New() *Roster { return &Roster{peers: make(map[string]*peer)} }
 
-// Seen records activity from a peer and reports whether this is the first time
-// we have seen them (so the caller can announce a join exactly once).
-func (r *Roster) Seen(id, nick string) (isNew bool) {
+// Seen records activity from a peer. It reports whether this is the first
+// sighting (so the caller can announce a join exactly once) and, when it is
+// not, the previously known nickname — so the caller can announce a rename
+// whenever prev differs from nick.
+func (r *Roster) Seen(id, nick string) (prev string, isNew bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	p, ok := r.peers[id]
 	if !ok {
 		r.peers[id] = &peer{nick: nick, last: time.Now()}
-		return true
+		return "", true
 	}
+	prev = p.nick
 	p.nick = nick
 	p.last = time.Now()
-	return false
+	return prev, false
 }
 
 // Leave removes a peer that announced departure, returning its last nickname.
