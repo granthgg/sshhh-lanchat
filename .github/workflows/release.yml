@@ -2,11 +2,16 @@ name: release
 
 # Cut a release by pushing a version tag:
 #
-#   git tag v2.1.1 && git push origin v2.1.1
+#   git tag v2.2.0 && git push origin v2.2.0
 #
-# This cross-compiles every desktop target and attaches the binaries to a new
-# GitHub Release, so users can download a single file (see the README's
-# "Install" section) without needing Go.
+# This cross-compiles every desktop target, generates SHA-256 checksums, and
+# attaches everything to a new GitHub Release. The checksums are what the
+# scripts/get.sh and scripts/get.ps1 web installers verify against, so users
+# get integrity-checked installs without a browser download (and therefore
+# without SmartScreen / Gatekeeper popups).
+#
+# The binaries are NOT code-signed. See docs/RELEASING.md for the code-signing
+# and notarization roadmap that removes the manual-download warnings for good.
 
 on:
   push:
@@ -26,7 +31,35 @@ jobs:
           cache: true
       - name: Cross-compile all targets
         run: make cross
+      - name: Generate SHA-256 checksums
+        run: cd dist && sha256sum * > checksums.txt && cat checksums.txt
+      - name: Write release notes
+        run: |
+          cat > "$RUNNER_TEMP/notes.md" <<'EOF'
+          ## Install
+
+          **Windows (PowerShell)** — checksum-verified, no SmartScreen popup:
+
+          ```powershell
+          irm https://raw.githubusercontent.com/granthgg/sshhh-lanchat/main/scripts/get.ps1 | iex
+          ```
+
+          **macOS / Linux** — checksum-verified, no Gatekeeper prompt:
+
+          ```sh
+          curl -fsSL https://raw.githubusercontent.com/granthgg/sshhh-lanchat/main/scripts/get.sh | sh
+          ```
+
+          Or download a binary below and verify it against `checksums.txt`.
+          Manual downloads are unsigned, so Windows/macOS will show an
+          "unknown publisher" warning — see the README's Install section for
+          why that happens and the exact steps to proceed safely.
+          EOF
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            --generate-notes

@@ -75,7 +75,29 @@ else on the network just sees encrypted noise.
 
 ## Install
 
-### Option A — Download a prebuilt binary (no Go, easiest)
+### Option A — One command, no warnings (recommended)
+
+**Windows (PowerShell):**
+
+```powershell
+irm https://raw.githubusercontent.com/granthgg/sshhh-lanchat/main/scripts/get.ps1 | iex
+```
+
+**macOS / Linux:**
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/granthgg/sshhh-lanchat/main/scripts/get.sh | sh
+```
+
+Both fetch the prebuilt binary for your machine from the latest release,
+**verify its SHA-256 checksum** against the release's `checksums.txt`, install
+it onto your PATH, and leave `lanchat` runnable from any terminal. No Go, no
+git, no build — and **no SmartScreen or Gatekeeper popup**, because those
+warnings screen *browser downloads* (which get stamped with a quarantine
+mark); a script download doesn't get the stamp, and the checksum check gives
+you a stronger guarantee than the popup ever did.
+
+### Option B — Manual download
 
 Grab the file for your system from the **[latest release »](https://github.com/granthgg/sshhh-lanchat/releases/latest)**:
 
@@ -88,8 +110,30 @@ Grab the file for your system from the **[latest release »](https://github.com/
 | Linux (x86-64) | `lanchat-linux-amd64` |
 | Linux (ARM) | `lanchat-linux-arm64` |
 
-**Windows** — rename it to `lanchat.exe` and run it. If SmartScreen warns, click
-**More info → Run anyway** (the file is unsigned, not malicious).
+<details>
+<summary><b>Why does Windows/macOS warn that this might be unsafe?</b></summary>
+
+The binaries are **not code-signed** — a signing certificate requires paid
+identity verification, and "publisher reputation" takes time to accrue. So
+when a *browser* downloads the file, the OS has no identity to show and warns
+"unknown publisher" / "unverified developer". **Unsigned is not the same as
+unsafe**: the source is public, every release is built by GitHub's CI directly
+from the tagged source, and `checksums.txt` on the release page lets you
+verify your download is byte-for-byte what CI produced:
+
+```powershell
+Get-FileHash lanchat-windows-amd64.exe   # Windows — compare with checksums.txt
+```
+```sh
+shasum -a 256 lanchat-macos-arm64        # macOS  — compare with checksums.txt
+```
+
+If you'd rather see no warning at all, use **Option A** (script downloads
+aren't screened) or build from source (**Option D**).
+</details>
+
+**Windows** — rename it to `lanchat.exe` and run it. When SmartScreen warns,
+click **More info → Run anyway** (see the note above for why it warns).
 
 **macOS / Linux** — in the terminal, in your downloads folder:
 
@@ -100,10 +144,10 @@ xattr -d com.apple.quarantine lanchat-* 2>/dev/null    # macOS only: clear the "
 ```
 
 To type just `lanchat` from any folder, move it onto your PATH and rename it,
-e.g. `mv lanchat-macos-arm64 ~/.local/bin/lanchat` — or use **Option C**, which
+e.g. `mv lanchat-macos-arm64 ~/.local/bin/lanchat` — or use **Option A**, which
 does that for you.
 
-### Option B — `go install` (one command, needs Go 1.25+)
+### Option C — `go install` (one command, needs Go 1.25+)
 
 ```sh
 go install github.com/granthgg/sshhh-lanchat/cmd/lanchat@latest
@@ -112,7 +156,7 @@ go install github.com/granthgg/sshhh-lanchat/cmd/lanchat@latest
 This drops `lanchat` in `$(go env GOPATH)/bin`. Make sure that directory is on
 your PATH.
 
-### Option C — Build from source with the installer (needs Go 1.25+)
+### Option D — Build from source with the installer (needs Go 1.25+)
 
 <details>
 <summary><b>How to install Go</b></summary>
@@ -147,8 +191,9 @@ directory** with no manual setup.
 
 ### Share with friends
 
-Easiest: send them the **[release link](https://github.com/granthgg/sshhh-lanchat/releases/latest)** —
-they download one file and run it. No Go, no build, no `git clone`. (Or just
+Easiest: send them the **Option A one-liner** for their OS — one paste in a
+terminal installs it, checksum-verified, with no scary popups. (Or send the
+[release link](https://github.com/granthgg/sshhh-lanchat/releases/latest), or
 hand them the binary directly over AirDrop / USB / Slack.)
 
 ## Commands
@@ -327,8 +372,11 @@ cross-platform multicast and terminal handling. See
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a deeper tour.
 
 Releases are cut by pushing a version tag (`git tag v2.2.0 && git push origin
-v2.2.0`); CI cross-compiles every target and attaches the binaries to a GitHub
-Release automatically.
+v2.2.0`); CI cross-compiles every target, generates `checksums.txt`, and
+attaches everything to a GitHub Release automatically. See
+[docs/RELEASING.md](docs/RELEASING.md) for the release process and the
+code-signing / notarization roadmap that would remove the manual-download
+warnings entirely.
 
 ## License
 
