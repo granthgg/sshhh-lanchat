@@ -328,7 +328,7 @@ func (u *UI) Run() {
 		}
 
 		// Any keystroke while hidden restores the screen and is swallowed.
-		if u.isHidden() {
+		if u.Hidden() {
 			u.ToggleBoss()
 			continue
 		}
@@ -375,7 +375,10 @@ func (u *UI) Run() {
 	}
 }
 
-func (u *UI) isHidden() bool {
+// Hidden reports whether boss mode is currently concealing the chat. The chat
+// layer uses it to hold back side channels (desktop notifications) that would
+// betray a hidden session.
+func (u *UI) Hidden() bool {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	return u.hidden

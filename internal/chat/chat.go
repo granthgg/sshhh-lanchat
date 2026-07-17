@@ -11,12 +11,14 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/granthgg/sshhh-lanchat/internal/crypto"
+	"github.com/granthgg/sshhh-lanchat/internal/notify"
 	"github.com/granthgg/sshhh-lanchat/internal/proto"
 	"github.com/granthgg/sshhh-lanchat/internal/roster"
 	"github.com/granthgg/sshhh-lanchat/internal/transport"
@@ -38,6 +40,7 @@ type Config struct {
 	Broadcast  bool   // send directed-broadcast copies alongside multicast
 	TTL        int    // multicast TTL (1 = stay on the local segment)
 	Bell       bool   // terminal bell when someone mentions your nick
+	Notify     bool   // desktop notifications for incoming messages (/snooze pauses them)
 	Version    string // version string shown in the banner
 }
 
@@ -51,11 +54,12 @@ type Client struct {
 	nickMu sync.RWMutex
 	nick   string
 
-	tr  *transport.Transport
-	ui  *ui.UI
-	ros *roster.Roster
-	dd  *proto.Dedup
-	seq proto.SeqGen
+	tr    *transport.Transport
+	ui    *ui.UI
+	ros   *roster.Roster
+	dd    *proto.Dedup
+	seq   proto.SeqGen
+	notif *notify.Notifier
 
 	aead crypto.AEAD
 	quit chan struct{}
@@ -99,8 +103,12 @@ func Run(cfg Config) error {
 			// mode exists to avoid.
 			Bell: cfg.Bell && !cfg.Stealth,
 		}),
-		ros:       roster.New(),
-		dd:        proto.NewDedup(),
+		ros: roster.New(),
+		dd:  proto.NewDedup(),
+		// Stealth never pops desktop notifications for the same reason it
+		// never bells: a banner sliding in over the fake build output is
+		// exactly the attention the mode exists to avoid.
+		notif:     notify.New(cfg.Notify && !cfg.Stealth),
 		aead:      aead,
 		quit:      make(chan struct{}),
 		stealth:   cfg.Stealth,
@@ -142,7 +150,7 @@ func (c *Client) setNick(n string) {
 
 // commandNames are the canonical slash commands offered by Tab completion
 // (aliases like /exit and /names still work, they just aren't suggested).
-var commandNames = []string{"/boss", "/clear", "/help", "/me", "/nick", "/quit", "/who"}
+var commandNames = []string{"/boss", "/clear", "/help", "/me", "/nick", "/quit", "/snooze", "/who"}
 
 // completions is the UI's Tab-completion source: slash commands at the start
 // of the line, and the nicknames currently in the room anywhere.
@@ -230,13 +238,105 @@ func (c *Client) command(line string) (quit bool) {
 		c.ui.ClearScreen()
 	case "/boss":
 		c.ui.ToggleBoss()
+	case "/snooze":
+		c.snoozeCmd(fields)
 	case "/help", "/?":
-		c.ui.System("commands: /who  /nick <name>  /me <action>  /clear  /boss  /quit")
+		c.ui.System("commands: /who  /nick <name>  /me <action>  /snooze [time|off]  /clear  /boss  /quit")
 		c.ui.System("keys: Tab completes names & commands (repeat to cycle) · Ctrl-B = instant hide")
 	default:
 		c.ui.System("unknown command " + fields[0] + " — try /help")
 	}
 	return false
+}
+
+// defaultSnooze is how long a bare /snooze quiets desktop notifications.
+const defaultSnooze = 15 * time.Minute
+
+// maxSnooze caps /snooze so a typo ("/snooze 1000h") can't silence
+// notifications effectively forever; -no-notify is the way to opt out.
+const maxSnooze = 24 * time.Hour
+
+// snoozeCmd implements /snooze [duration|off]: it pauses desktop
+// notifications for the given time (default 15m) without touching the
+// in-terminal message flow — you keep chatting, your OS stays quiet.
+func (c *Client) snoozeCmd(fields []string) {
+	if !c.notif.Enabled() {
+		c.ui.System("desktop notifications are off in this session (-no-notify or -stealth)")
+		return
+	}
+	if len(fields) >= 2 && strings.EqualFold(fields[1], "off") {
+		if c.notif.SnoozedFor() == 0 {
+			c.ui.System("notifications weren't snoozed")
+			return
+		}
+		c.notif.Unsnooze()
+		c.ui.System("snooze lifted — desktop notifications are back on")
+		return
+	}
+	d := defaultSnooze
+	if len(fields) >= 2 {
+		var err error
+		if d, err = parseSnooze(fields[1]); err != nil {
+			c.ui.System("usage: /snooze [minutes | 10m | 1h30m | off]   (default 15m)")
+			return
+		}
+	}
+	c.notif.Snooze(d)
+	c.ui.System("desktop notifications snoozed for " + formatDur(d) + " — /snooze off to undo")
+}
+
+// parseSnooze turns a /snooze argument into a duration. A bare number means
+// minutes ("/snooze 10"); anything else uses Go duration syntax ("90s",
+// "1h30m"). Non-positive durations are rejected; long ones clamp to maxSnooze
+// (the confirmation echoes the clamped value, so nothing is silent).
+func parseSnooze(arg string) (time.Duration, error) {
+	d, err := time.ParseDuration(arg)
+	if err != nil {
+		mins, convErr := strconv.Atoi(arg)
+		if convErr != nil {
+			return 0, err
+		}
+		d = time.Duration(mins) * time.Minute
+	}
+	if d <= 0 {
+		return 0, errors.New("duration must be positive")
+	}
+	if d > maxSnooze {
+		d = maxSnooze
+	}
+	return d, nil
+}
+
+// formatDur renders a duration compactly ("15m", "1h30m", "45s") for system
+// notices; time.Duration.String would print "15m0s".
+func formatDur(d time.Duration) string {
+	d = d.Round(time.Second)
+	h := int(d / time.Hour)
+	m := int(d % time.Hour / time.Minute)
+	s := int(d % time.Minute / time.Second)
+	switch {
+	case h > 0 && m > 0:
+		return fmt.Sprintf("%dh%dm", h, m)
+	case h > 0:
+		return fmt.Sprintf("%dh", h)
+	case m > 0 && s > 0:
+		return fmt.Sprintf("%dm%ds", m, s)
+	case m > 0:
+		return fmt.Sprintf("%dm", m)
+	default:
+		return fmt.Sprintf("%ds", s)
+	}
+}
+
+// notifyDesktop mirrors one incoming chat line to the OS notification layer
+// (best-effort, burst-collapsed, pausable with /snooze). Suppressed while the
+// boss screen is up: a banner sliding in would give the user away at exactly
+// the moment they hit the panic key.
+func (c *Client) notifyDesktop(line string) {
+	if c.ui.Hidden() {
+		return
+	}
+	c.notif.Notify("lanchat · "+c.room, line)
 }
 
 // ---- networking loops ------------------------------------------------------
@@ -324,9 +424,11 @@ func (c *Client) recvLoop() {
 		case proto.TypeMsg:
 			body := proto.ClampRunes(proto.Sanitize(m.B), proto.MaxBodyRunes)
 			c.ui.Chat(m.N, body, proto.Mentions(body, c.currentNick()))
+			c.notifyDesktop(m.N + ": " + body)
 		case proto.TypeMe:
 			body := proto.ClampRunes(proto.Sanitize(m.B), proto.MaxBodyRunes)
 			c.ui.Action(m.N, body, proto.Mentions(body, c.currentNick()))
+			c.notifyDesktop("* " + m.N + " " + body)
 		case proto.TypeLeave:
 			if nick, ok := c.ros.Leave(m.ID); ok {
 				c.ui.System("← " + nick + " left")

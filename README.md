@@ -16,7 +16,7 @@ with the same **room** and **passphrase** is in the same conversation, like
 tuning a walkie-talkie to a channel.
 
 ```
-  lanchat 2.3.0 — ephemeral encrypted LAN chat
+  lanchat 2.4.0 — ephemeral encrypted LAN chat
   ────────────────────────────────────────────────────────────────
   room   "lobby" · OPEN — anyone on this Wi-Fi can read it
   you    "granth" · rename with /nick <name>
@@ -204,6 +204,7 @@ hand them the binary directly over AirDrop / USB / Slack.)
 | `/who` | list who's here right now |
 | `/nick <name>` | change your display name |
 | `/me <action>` | send an action, e.g. `* alice waves` |
+| `/snooze [time\|off]` | pause desktop notifications — `/snooze` = 15 min, `/snooze 1h`, `/snooze off` |
 | `/clear` | clear the screen |
 | `/boss` | hide (fake build output) |
 | `/quit` | leave |
@@ -214,6 +215,15 @@ hand them the binary directly over AirDrop / USB / Slack.)
 `/n<Tab>` becomes `/nick `. When someone writes **your name**, the line is
 highlighted and your terminal bells so you don't miss it — disable the bell
 with `-no-bell` (stealth mode never bells).
+
+New messages also raise a **quiet desktop notification** (macOS Notification
+Center, a Windows toast, `notify-send` on Linux), so the room can reach you
+while the terminal sits in a background window. It's deliberately unobtrusive:
+no sound, and a burst of messages collapses into a single banner. Need to
+focus mid-conversation? Type `/snooze` and they pause for 15 minutes —
+`/snooze 45`, `/snooze 1h30m` and `/snooze off` work the way you'd guess, and
+`-no-notify` turns them off for the whole session. Stealth mode and the boss
+screen never notify.
 
 Editing keys: arrows (move / history), Home/End, Ctrl-A/E, Ctrl-U (clear line),
 Ctrl-W (delete word), Ctrl-L (clear screen), Backspace/Delete.
@@ -233,6 +243,7 @@ Ctrl-W (delete word), Ctrl-L (clear screen), Backspace/Delete.
 | `-prompt <str>` | Custom input prompt | `» ` |
 | `-no-broadcast` | Disable the broadcast fallback | off |
 | `-no-bell` | Don't ring the terminal bell when your name is mentioned | off |
+| `-no-notify` | Don't show desktop notifications for incoming messages | off |
 | `-version` | Print version | |
 
 > **Passphrases:** prefer `-ask` or the `CHAT_KEY` environment variable over
@@ -243,9 +254,9 @@ Ctrl-W (delete word), Ctrl-L (clear screen), Backspace/Delete.
 
 Press **Ctrl-B** and the screen is instantly replaced with plausible build
 output, ending at a shell prompt. While hidden, **nothing pops up and nothing
-beeps** to give you away — incoming messages are held in memory (never on
-disk), and **replayed the moment you come back**, so a quick hide no longer
-costs you the conversation. Any keystroke restores the chat. `/boss` does the
+beeps** to give you away — desktop notifications are suppressed too — incoming
+messages are held in memory (never on disk), and **replayed the moment you
+come back**, so a quick hide no longer costs you the conversation. Any keystroke restores the chat. `/boss` does the
 same thing if you prefer a command. Run with `-stealth` to make the normal
 prompt look like a shell too — in stealth mode chat lines also drop the
 bold/gutter styling and render as flat, logger-style output, and the mention
@@ -373,6 +384,7 @@ The project follows the standard Go layout:
 | `cmd/lanchat/` | CLI entry point — flags, usage, key resolution, wiring |
 | `internal/chat/` | composition root: builds a session and runs the loops |
 | `internal/crypto/` | key derivation, AES-256-GCM sealing, wire framing |
+| `internal/notify/` | best-effort desktop notifications with snooze + burst collapsing |
 | `internal/proto/` | message record, dedup, sequence numbers, sanitizer |
 | `internal/roster/` | presence tracking |
 | `internal/transport/` | UDP multicast + broadcast, interface selection, sockopts |
@@ -383,8 +395,8 @@ dependencies are the official `golang.org/x/{net,term,sys}` packages for
 cross-platform multicast and terminal handling. See
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a deeper tour.
 
-Releases are cut by pushing a version tag (`git tag v2.3.0 && git push origin
-v2.3.0`); CI cross-compiles every target, generates `checksums.txt`, and
+Releases are cut by pushing a version tag (`git tag v2.4.0 && git push origin
+v2.4.0`); CI cross-compiles every target, generates `checksums.txt`, and
 attaches everything to a GitHub Release automatically. See
 [docs/RELEASING.md](docs/RELEASING.md) for the release process and the
 code-signing / notarization roadmap that would remove the manual-download
