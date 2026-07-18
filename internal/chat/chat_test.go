@@ -72,6 +72,37 @@ func TestParseSnooze(t *testing.T) {
 	}
 }
 
+// The snoozer gates the bell: silenced before the deadline, ringing after; a
+// new snooze replaces the old deadline rather than extending it, and clear
+// lifts it immediately.
+func TestSnoozer(t *testing.T) {
+	s := newSnoozer()
+	now := time.Unix(1_000_000, 0)
+	s.now = func() time.Time { return now }
+
+	if got := s.remaining(); got != 0 {
+		t.Fatalf("fresh snoozer: remaining() = %v, want 0", got)
+	}
+	s.set(10 * time.Minute)
+	if got := s.remaining(); got != 10*time.Minute {
+		t.Fatalf("remaining() = %v, want 10m", got)
+	}
+	now = now.Add(9 * time.Minute)
+	s.set(time.Minute) // replace: 1m from now, not 1m + the old remainder
+	if got := s.remaining(); got != time.Minute {
+		t.Fatalf("remaining() after re-snooze = %v, want 1m", got)
+	}
+	now = now.Add(time.Minute + time.Second)
+	if got := s.remaining(); got != 0 {
+		t.Fatalf("remaining() after expiry = %v, want 0", got)
+	}
+	s.set(time.Hour)
+	s.clear()
+	if got := s.remaining(); got != 0 {
+		t.Fatalf("remaining() after clear = %v, want 0", got)
+	}
+}
+
 // formatDur drops the zero units that time.Duration.String would print.
 func TestFormatDur(t *testing.T) {
 	cases := []struct {

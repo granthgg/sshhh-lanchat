@@ -114,9 +114,9 @@ func TestBossReplay(t *testing.T) {
 	u.out = f
 
 	u.ToggleBoss() // hide
-	u.Chat("alice", "first while hidden", false)
-	u.Chat("bob", "second while hidden", true) // mention: still silent while hidden
-	u.ToggleBoss()                             // restore → replay
+	u.Chat("id-a", "alice", "first while hidden", false, true)
+	u.Chat("id-b", "bob", "second while hidden", true, true) // bell asked for: still silent while hidden
+	u.ToggleBoss()                                           // restore → replay
 
 	// Close before reading: Windows cannot delete a still-open file, which
 	// would fail the test's TempDir cleanup.
@@ -165,4 +165,47 @@ func TestBossReplayCapped(t *testing.T) {
 	if !strings.Contains(out, "507 message(s)") || !strings.Contains(out, "showing the last 500") {
 		t.Fatalf("cap note missing or wrong:\n%.200s", out)
 	}
+}
+
+// Speaker colors: no two present speakers share a color while slots remain —
+// even with the same nickname — an assignment is stable and keyed by the
+// speaker's id (so a /nick rename keeps it), the nick-hash slot is preferred
+// when free, and ForgetColor releases a slot for the next joiner.
+func TestSpeakerColors(t *testing.T) {
+	u := New(Options{Color: true})
+
+	first := u.colorFor("id-a", "anon")
+	if want := palette[hashIdx("anon")]; first != want {
+		t.Fatalf("uncontended speaker got %d, want the nick-hash color %d", first, want)
+	}
+	second := u.colorFor("id-b", "anon") // same nick, different person
+	if second == first {
+		t.Fatalf("two speakers named %q share color %d", "anon", first)
+	}
+	if got := u.colorFor("id-a", "anon"); got != first {
+		t.Fatalf("assignment not stable: was %d, now %d", first, got)
+	}
+	if got := u.colorFor("id-a", "renamed"); got != first {
+		t.Fatalf("rename changed the color: was %d, now %d", first, got)
+	}
+
+	// Fill the palette: 12 concurrent speakers → 12 distinct colors.
+	u2 := New(Options{Color: true})
+	seen := make(map[int]string)
+	for _, id := range []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"} {
+		c := u2.colorFor(id, "anon")
+		if holder, dup := seen[c]; dup {
+			t.Fatalf("speakers %q and %q share color %d", holder, id, c)
+		}
+		seen[c] = id
+	}
+
+	// Slot 13 must share (least-used), but releasing one frees its color.
+	crowd := u2.colorFor("m", "anon")
+	freed := u2.colorFor("c", "anon")
+	u2.ForgetColor("c")
+	if got := u2.colorFor("n", "anon"); got != freed {
+		t.Fatalf("released color %d not reused, got %d", freed, got)
+	}
+	_ = crowd
 }

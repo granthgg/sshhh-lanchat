@@ -58,15 +58,22 @@ func (r *Roster) Leave(id string) (nick string, existed bool) {
 	return "", false
 }
 
-// Expire drops peers not heard from within presenceTTL, returning their nicks
-// so the caller can announce the departures.
-func (r *Roster) Expire() (left []string) {
+// Departure identifies one peer dropped from the roster: the nick for the
+// on-screen announcement, the id for per-peer cleanup (color release).
+type Departure struct {
+	ID   string
+	Nick string
+}
+
+// Expire drops peers not heard from within presenceTTL, returning who left so
+// the caller can announce the departures and release per-peer state.
+func (r *Roster) Expire() (left []Departure) {
 	cutoff := time.Now().Add(-presenceTTL)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for id, p := range r.peers {
 		if p.last.Before(cutoff) {
-			left = append(left, p.nick)
+			left = append(left, Departure{ID: id, Nick: p.nick})
 			delete(r.peers, id)
 		}
 	}

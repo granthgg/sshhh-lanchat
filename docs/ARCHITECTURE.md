@@ -24,13 +24,11 @@ cmd/lanchat/          CLI entry point — flags, usage, key resolution, wiring
 internal/
   chat/               composition root: builds a session and runs the loops
   crypto/             key derivation + AES-256-GCM wire framing
-  notify/             best-effort desktop notifications: snooze + rate-limit
-                      gating, per-OS senders (osascript / PowerShell / libnotify)
   proto/              Msg record, seq numbers, dedup, bounded encoding, mentions
   roster/             presence tracking (who is here right now)
   transport/          UDP multicast + directed broadcast, interface tracking
   ui/                 raw-mode line editor with Tab completion, thread-safe
-                      printer, mention alerts, boss-key decoy + replay buffer
+                      printer, attention bell, boss-key decoy + replay buffer
 ```
 
 The dependency direction is strictly one-way — nothing in `internal/` imports
@@ -44,7 +42,6 @@ graph TD
     chat --> roster
     chat --> proto
     chat --> ui
-    chat --> notify
     ui --> proto
 ```
 
@@ -131,9 +128,7 @@ A running session has five long-lived goroutines plus the main loop:
 | `transport.rescanLoop` | refreshes interfaces / multicast membership |
 | main loop        | ranges over `ui.Lines`, handles input & commands  |
 
-(plus a short-lived jittered goroutine per received join — see Presence — and
-a fire-and-forget goroutine per delivered desktop notification, so the receive
-loop never waits on an OS helper process).
+(plus a short-lived jittered goroutine per received join — see Presence).
 
 The `ui` package funnels **every** terminal write through a single mutex, so the
 input editor and asynchronous incoming messages never interleave on screen.
@@ -168,14 +163,16 @@ Unit tests live beside the code they cover:
 - `internal/proto` — dedup semantics, the control-character sanitizer,
   rune-boundary-safe byte clamping, the size-bounded encoder (budget,
   validity, no HTML escaping), and whole-word mention matching.
-- `internal/notify` — the delivery gates (disabled / snoozed / rate-limited),
-  snooze replace-and-expire semantics, and notification-body tidying.
-- `internal/roster` — join/rename/leave semantics and stable ordering.
+- `internal/roster` — join/rename/leave/expire semantics and stable ordering.
 - `internal/transport` — deterministic room→group mapping, reserved-group
   avoidance, and directed-broadcast address math.
 - `internal/ui` — Tab-completion mechanics (suffixes, cycling, mid-line
-  tails) and the boss-mode replay buffer (held lines, silence, cap).
-- `internal/chat` — completion filtering and command-candidate rules.
+  tails), the boss-mode replay buffer (held lines, silence, cap), and
+  speaker-color assignment (distinct while slots last, stable across renames,
+  released on leave).
+- `internal/chat` — completion filtering, command-candidate rules, /snooze
+  duration parsing/formatting, and the bell-snooze replace-and-expire
+  semantics.
 
 ```sh
 go test -race ./...

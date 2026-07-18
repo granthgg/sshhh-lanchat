@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/granthgg/sshhh-lanchat/internal/crypto"
-	"github.com/granthgg/sshhh-lanchat/internal/notify"
 	"github.com/granthgg/sshhh-lanchat/internal/proto"
 	"github.com/granthgg/sshhh-lanchat/internal/roster"
 	"github.com/granthgg/sshhh-lanchat/internal/transport"
@@ -39,8 +38,7 @@ type Config struct {
 	Prompt     string // input prompt string
 	Broadcast  bool   // send directed-broadcast copies alongside multicast
 	TTL        int    // multicast TTL (1 = stay on the local segment)
-	Bell       bool   // terminal bell when someone mentions your nick
-	Notify     bool   // desktop notifications for incoming messages (/snooze pauses them)
+	Bell       bool   // terminal bell on new messages — the Dock-badge/taskbar signal
 	Version    string // version string shown in the banner
 }
 
@@ -54,12 +52,12 @@ type Client struct {
 	nickMu sync.RWMutex
 	nick   string
 
-	tr    *transport.Transport
-	ui    *ui.UI
-	ros   *roster.Roster
-	dd    *proto.Dedup
-	seq   proto.SeqGen
-	notif *notify.Notifier
+	tr  *transport.Transport
+	ui  *ui.UI
+	ros *roster.Roster
+	dd  *proto.Dedup
+	seq proto.SeqGen
+	snz *snoozer
 
 	aead crypto.AEAD
 	quit chan struct{}
@@ -67,6 +65,7 @@ type Client struct {
 
 	stealth   bool
 	broadcast bool
+	bellOn    bool // mirrors the UI's bell gate, for /snooze feedback
 	version   string
 }
 
@@ -103,16 +102,14 @@ func Run(cfg Config) error {
 			// mode exists to avoid.
 			Bell: cfg.Bell && !cfg.Stealth,
 		}),
-		ros: roster.New(),
-		dd:  proto.NewDedup(),
-		// Stealth never pops desktop notifications for the same reason it
-		// never bells: a banner sliding in over the fake build output is
-		// exactly the attention the mode exists to avoid.
-		notif:     notify.New(cfg.Notify && !cfg.Stealth),
+		ros:       roster.New(),
+		dd:        proto.NewDedup(),
+		snz:       newSnoozer(),
 		aead:      aead,
 		quit:      make(chan struct{}),
 		stealth:   cfg.Stealth,
 		broadcast: cfg.Broadcast,
+		bellOn:    cfg.Bell && !cfg.Stealth,
 		version:   cfg.Version,
 	}
 	c.ui.Completer = c.completions
@@ -188,7 +185,7 @@ func (c *Client) handleLine(line string) bool {
 		return c.command(line)
 	}
 	text := clampBody(line)
-	c.ui.Chat(c.currentNick(), text, false) // echo locally, exactly what will be sent
+	c.ui.Chat(c.id, c.currentNick(), text, false, false) // echo locally, exactly what will be sent
 	c.send(proto.TypeMsg, text)
 	return false
 }
@@ -225,7 +222,7 @@ func (c *Client) command(line string) (quit bool) {
 			return false
 		}
 		text := clampBody(strings.TrimSpace(line[len("/me"):]))
-		c.ui.Action(c.currentNick(), text, false)
+		c.ui.Action(c.id, c.currentNick(), text, false, false)
 		c.send(proto.TypeMe, text)
 	case "/who", "/names":
 		names := c.ros.List()
@@ -249,28 +246,28 @@ func (c *Client) command(line string) (quit bool) {
 	return false
 }
 
-// defaultSnooze is how long a bare /snooze quiets desktop notifications.
+// defaultSnooze is how long a bare /snooze quiets the message bell.
 const defaultSnooze = 15 * time.Minute
 
-// maxSnooze caps /snooze so a typo ("/snooze 1000h") can't silence
-// notifications effectively forever; -no-notify is the way to opt out.
+// maxSnooze caps /snooze so a typo ("/snooze 1000h") can't silence the bell
+// effectively forever; -no-bell is the way to opt out.
 const maxSnooze = 24 * time.Hour
 
-// snoozeCmd implements /snooze [duration|off]: it pauses desktop
-// notifications for the given time (default 15m) without touching the
-// in-terminal message flow — you keep chatting, your OS stays quiet.
+// snoozeCmd implements /snooze [duration|off]: it pauses the message bell for
+// the given time (default 15m) without touching the in-terminal message flow —
+// you keep chatting, your terminal stops calling for attention.
 func (c *Client) snoozeCmd(fields []string) {
-	if !c.notif.Enabled() {
-		c.ui.System("desktop notifications are off in this session (-no-notify or -stealth)")
+	if !c.bellOn {
+		c.ui.System("the message bell is already off in this session (-no-bell or -stealth)")
 		return
 	}
 	if len(fields) >= 2 && strings.EqualFold(fields[1], "off") {
-		if c.notif.SnoozedFor() == 0 {
-			c.ui.System("notifications weren't snoozed")
+		if c.snz.remaining() == 0 {
+			c.ui.System("the message bell wasn't snoozed")
 			return
 		}
-		c.notif.Unsnooze()
-		c.ui.System("snooze lifted — desktop notifications are back on")
+		c.snz.clear()
+		c.ui.System("snooze lifted — the message bell is back on")
 		return
 	}
 	d := defaultSnooze
@@ -281,8 +278,8 @@ func (c *Client) snoozeCmd(fields []string) {
 			return
 		}
 	}
-	c.notif.Snooze(d)
-	c.ui.System("desktop notifications snoozed for " + formatDur(d) + " — /snooze off to undo")
+	c.snz.set(d)
+	c.ui.System("message bell snoozed for " + formatDur(d) + " — /snooze off to undo")
 }
 
 // parseSnooze turns a /snooze argument into a duration. A bare number means
@@ -328,15 +325,51 @@ func formatDur(d time.Duration) string {
 	}
 }
 
-// notifyDesktop mirrors one incoming chat line to the OS notification layer
-// (best-effort, burst-collapsed, pausable with /snooze). Suppressed while the
-// boss screen is up: a banner sliding in would give the user away at exactly
-// the moment they hit the panic key.
-func (c *Client) notifyDesktop(line string) {
-	if c.ui.Hidden() {
-		return
+// attend reports whether an arriving message may ring the terminal bell right
+// now. The bell is more than a beep: terminals surface a background bell as a
+// Dock badge/bounce (macOS Terminal), a tab marker (iTerm2, tmux) or a
+// taskbar flash (Windows Terminal) — the "you have a message" signal when the
+// window isn't visible. /snooze pauses it; the UI itself drops the bell in
+// stealth (-no-bell) and while boss-hidden.
+func (c *Client) attend() bool {
+	return c.snz.remaining() == 0
+}
+
+// snoozer holds the /snooze state: a deadline before which arriving messages
+// must not ring the attention bell. Thread-safe because /snooze runs on the
+// input goroutine while attend is called from the receive goroutine.
+type snoozer struct {
+	mu    sync.Mutex
+	until time.Time
+	now   func() time.Time // clock; swapped in tests
+}
+
+func newSnoozer() *snoozer { return &snoozer{now: time.Now} }
+
+// set silences the bell for d from now, replacing (not extending) any snooze
+// already running.
+func (s *snoozer) set(d time.Duration) {
+	s.mu.Lock()
+	s.until = s.now().Add(d)
+	s.mu.Unlock()
+}
+
+// clear lifts an active snooze immediately.
+func (s *snoozer) clear() {
+	s.mu.Lock()
+	s.until = time.Time{}
+	s.mu.Unlock()
+}
+
+// remaining reports how much of an active snooze is left, or zero when the
+// bell is not snoozed.
+func (s *snoozer) remaining() time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if r := s.until.Sub(s.now()); r > 0 {
+		return r
 	}
-	c.notif.Notify("lanchat · "+c.room, line)
+	return 0
 }
 
 // ---- networking loops ------------------------------------------------------
@@ -423,14 +456,13 @@ func (c *Client) recvLoop() {
 		switch m.T {
 		case proto.TypeMsg:
 			body := proto.ClampRunes(proto.Sanitize(m.B), proto.MaxBodyRunes)
-			c.ui.Chat(m.N, body, proto.Mentions(body, c.currentNick()))
-			c.notifyDesktop(m.N + ": " + body)
+			c.ui.Chat(m.ID, m.N, body, proto.Mentions(body, c.currentNick()), c.attend())
 		case proto.TypeMe:
 			body := proto.ClampRunes(proto.Sanitize(m.B), proto.MaxBodyRunes)
-			c.ui.Action(m.N, body, proto.Mentions(body, c.currentNick()))
-			c.notifyDesktop("* " + m.N + " " + body)
+			c.ui.Action(m.ID, m.N, body, proto.Mentions(body, c.currentNick()), c.attend())
 		case proto.TypeLeave:
 			if nick, ok := c.ros.Leave(m.ID); ok {
+				c.ui.ForgetColor(m.ID) // free the color for the next joiner
 				c.ui.System("← " + nick + " left")
 			}
 		case proto.TypeJoin, proto.TypePing:
@@ -471,8 +503,9 @@ func (c *Client) expireLoop() {
 		case <-c.quit:
 			return
 		case <-t.C:
-			for _, nick := range c.ros.Expire() {
-				c.ui.System("← " + nick + " left (timed out)")
+			for _, d := range c.ros.Expire() {
+				c.ui.ForgetColor(d.ID)
+				c.ui.System("← " + d.Nick + " left (timed out)")
 			}
 		}
 	}

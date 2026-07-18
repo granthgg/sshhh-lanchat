@@ -45,6 +45,13 @@ type UI struct {
 	hiddenBuf     []string // lines held while hidden, replayed on restore
 	hiddenDropped int      // lines beyond the buffer cap, oldest first
 
+	// Speaker colors (-color): each speaker key (sender instance id) holds
+	// one palette slot for as long as they're present, so two people never
+	// share a color while free slots remain — even two people using the same
+	// nickname. Guarded by mu.
+	colorAssign map[string]int // key → ANSI color code
+	colorUse    map[int]int    // ANSI color code → current holders
+
 	// Tab-completion session state; owned by the Run goroutine.
 	compActive bool
 	compCands  []string
@@ -68,21 +75,23 @@ type Options struct {
 	Prompt   string
 	Color    bool // colorize nicknames
 	LogStyle bool // stealth: flat unstyled lines that read as log output
-	Bell     bool // ring the terminal bell on mention-flagged lines
+	Bell     bool // ring the terminal bell on bell-flagged lines
 }
 
 // New returns a UI bound to stdin/stdout. If stdin is a terminal it switches
 // to raw mode; otherwise it stays in line-buffered mode.
 func New(o Options) *UI {
 	u := &UI{
-		out:      os.Stdout,
-		in:       bufio.NewReader(os.Stdin),
-		fd:       int(os.Stdin.Fd()),
-		color:    o.Color,
-		logStyle: o.LogStyle,
-		bell:     o.Bell,
-		prompt:   o.Prompt,
-		Lines:    make(chan string, 16),
+		out:         os.Stdout,
+		in:          bufio.NewReader(os.Stdin),
+		fd:          int(os.Stdin.Fd()),
+		color:       o.Color,
+		logStyle:    o.LogStyle,
+		bell:        o.Bell,
+		prompt:      o.Prompt,
+		colorAssign: make(map[string]int),
+		colorUse:    make(map[int]int),
+		Lines:       make(chan string, 16),
 	}
 	u.histPos = 0
 	if term.IsTerminal(u.fd) {
@@ -204,20 +213,25 @@ func (u *UI) Width() int {
 	return 80
 }
 
-// Chat prints a chat line from nick. mention highlights the line and rings
-// the terminal bell (when enabled): it marks messages that name the user.
-func (u *UI) Chat(nick, text string, mention bool) {
-	u.emit(u.format(nick, text, false, mention), mention)
+// Chat prints a chat line from nick. key identifies the speaker for color
+// assignment — the sender's instance id, not the nick, since nicknames are
+// neither unique nor stable. mention bolds the message (it names the user);
+// bell asks for the terminal bell, which is what a backgrounded terminal
+// surfaces as a Dock badge / bounce (macOS) or taskbar flash (Windows) — the
+// "you have a message" signal when the window isn't visible.
+func (u *UI) Chat(key, nick, text string, mention, bell bool) {
+	u.emit(u.format(key, nick, text, false, mention), bell)
 }
 
-// Action prints an emote, e.g. "* alice waves". mention behaves as in Chat.
-func (u *UI) Action(nick, text string, mention bool) {
-	u.emit(u.format("*", nick+" "+text, false, mention), mention)
+// Action prints an emote, e.g. "* alice waves". key, mention and bell behave
+// as in Chat; the * marker takes the speaker's color.
+func (u *UI) Action(key, nick, text string, mention, bell bool) {
+	u.emit(u.format(key, "*", nick+" "+text, false, mention), bell)
 }
 
 // System prints a system notice.
 func (u *UI) System(text string) {
-	u.emit(u.format("·", text, true, false), false)
+	u.emit(u.format("", "·", text, true, false), false)
 }
 
 // nickCol is the fixed display width of the name column.
@@ -227,13 +241,15 @@ const nickCol = 12
 //
 // Decorated mode (the default) separates metadata from content so names read
 // at a glance even without -color: the timestamp is dimmed, the nick is
-// right-aligned into a fixed column and emphasized (bold, or its hash color
-// with -color), and a dim │ gutter runs between names and messages, forming a
-// clean vertical seam down the screen. System notices are dimmed whole so real
-// chat stands out; mention-flagged messages are bolded so lines that name the
-// user stand out further. Log style (stealth) keeps the flat, unstyled layout
-// that passes for logger output.
-func (u *UI) format(nick, text string, system, mention bool) string {
+// right-aligned into a fixed column and emphasized (bold, or the speaker's
+// assigned color with -color), and a dim │ gutter runs between names and
+// messages, forming a clean vertical seam down the screen. System notices are
+// dimmed whole so real chat stands out; mention-flagged messages are bolded
+// so lines that name the user stand out further. Log style (stealth) keeps
+// the flat, unstyled layout that passes for logger output.
+//
+// Callers must not hold mu for non-system lines: color assignment locks it.
+func (u *UI) format(key, nick, text string, system, mention bool) string {
 	ts := time.Now().Format("15:04:05")
 	name := proto.ClampRunes(nick, nickCol)
 	pad := strings.Repeat(" ", nickCol-len([]rune(name)))
@@ -245,7 +261,7 @@ func (u *UI) format(nick, text string, system, mention bool) string {
 	}
 	styled := u.sgr("1", name)
 	if u.color {
-		styled = u.sgr(strconv.Itoa(colorFor(nick)), name)
+		styled = u.sgr(strconv.Itoa(u.colorFor(key, nick)), name)
 	}
 	if mention {
 		text = u.sgr("1", text)
@@ -262,13 +278,68 @@ func (u *UI) sgr(code, t string) string {
 	return "\x1b[" + code + "m" + t + "\x1b[0m"
 }
 
-func colorFor(s string) int {
+// palette is the set of ANSI colors handed out to speakers in -color mode:
+// the six standard colors and their bright variants (dim codes are reserved
+// for the UI's own metadata styling).
+var palette = [...]int{31, 32, 33, 34, 35, 36, 91, 92, 93, 94, 95, 96}
+
+// colorFor returns the color for one speaker. A speaker keeps their first
+// assignment for as long as they hold a slot — keyed by instance id, so a
+// /nick rename keeps a person's color and two people sharing a nickname still
+// look different. A new speaker prefers the hash of their nick (colors agree
+// across machines when there's no contention, and match pre-registry builds),
+// takes the nearest free slot after it when the preferred one is held, and
+// only when every slot is occupied shares the least-crowded one.
+func (u *UI) colorFor(key, nick string) int {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if c, ok := u.colorAssign[key]; ok {
+		return c
+	}
+	start := hashIdx(nick)
+	best, bestUse := start, int(^uint(0)>>1)
+	for i := range palette {
+		idx := (start + i) % len(palette)
+		use := u.colorUse[palette[idx]]
+		if use == 0 {
+			best = idx
+			break
+		}
+		if use < bestUse {
+			best, bestUse = idx, use
+		}
+	}
+	c := palette[best]
+	u.colorAssign[key] = c
+	u.colorUse[c]++
+	return c
+}
+
+// ForgetColor releases the color slot held by key (the peer left), freeing it
+// for the next joiner. Lines already on screen keep the color they were
+// printed with; if the same peer somehow speaks again they are simply
+// re-assigned.
+func (u *UI) ForgetColor(key string) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if c, ok := u.colorAssign[key]; ok {
+		delete(u.colorAssign, key)
+		if u.colorUse[c] > 1 {
+			u.colorUse[c]--
+		} else {
+			delete(u.colorUse, c)
+		}
+	}
+}
+
+// hashIdx maps a nickname to its preferred palette slot (FNV-1a — the same
+// mapping colors used before the per-speaker registry existed).
+func hashIdx(s string) int {
 	var h uint32 = 2166136261
 	for _, c := range s {
 		h = (h ^ uint32(c)) * 16777619
 	}
-	palette := []int{31, 32, 33, 34, 35, 36, 91, 92, 93, 94, 95, 96}
-	return palette[int(h%uint32(len(palette)))]
+	return int(h % uint32(len(palette)))
 }
 
 // ---- boss mode -------------------------------------------------------------
@@ -295,7 +366,8 @@ func (u *UI) ToggleBoss() {
 		if u.hiddenDropped > 0 {
 			note += fmt.Sprintf(" (showing the last %d)", n)
 		}
-		fmt.Fprint(u.out, u.format("·", note, true, false), end)
+		// System line: safe to format while holding mu (no color assignment).
+		fmt.Fprint(u.out, u.format("", "·", note, true, false), end)
 		for _, line := range u.hiddenBuf {
 			fmt.Fprint(u.out, line, end)
 		}
@@ -328,7 +400,7 @@ func (u *UI) Run() {
 		}
 
 		// Any keystroke while hidden restores the screen and is swallowed.
-		if u.Hidden() {
+		if u.isHidden() {
 			u.ToggleBoss()
 			continue
 		}
@@ -375,10 +447,7 @@ func (u *UI) Run() {
 	}
 }
 
-// Hidden reports whether boss mode is currently concealing the chat. The chat
-// layer uses it to hold back side channels (desktop notifications) that would
-// betray a hidden session.
-func (u *UI) Hidden() bool {
+func (u *UI) isHidden() bool {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	return u.hidden

@@ -34,7 +34,9 @@ tuning a walkie-talkie to a channel.
 
 Names sit right-aligned and bold against a dimmed `│` gutter, so who-said-what
 is readable at a glance even without `-color` (which additionally gives every
-person a stable color).
+person their own stable color — no two people in the room share one while the
+12-color palette lasts, even if they picked the same name, and a `/nick`
+rename keeps your color).
 
 ## Contents
 
@@ -204,7 +206,7 @@ hand them the binary directly over AirDrop / USB / Slack.)
 | `/who` | list who's here right now |
 | `/nick <name>` | change your display name |
 | `/me <action>` | send an action, e.g. `* alice waves` |
-| `/snooze [time\|off]` | pause desktop notifications — `/snooze` = 15 min, `/snooze 1h`, `/snooze off` |
+| `/snooze [time\|off]` | pause the message bell — `/snooze` = 15 min, `/snooze 1h`, `/snooze off` |
 | `/clear` | clear the screen |
 | `/boss` | hide (fake build output) |
 | `/quit` | leave |
@@ -213,17 +215,18 @@ hand them the binary directly over AirDrop / USB / Slack.)
 
 `Tab` on `al` becomes `alice: ` (names come from who's in the room right now);
 `/n<Tab>` becomes `/nick `. When someone writes **your name**, the line is
-highlighted and your terminal bells so you don't miss it — disable the bell
-with `-no-bell` (stealth mode never bells).
+additionally shown in bold so it stands out in the flow.
 
-New messages also raise a **quiet desktop notification** (macOS Notification
-Center, a Windows toast, `notify-send` on Linux), so the room can reach you
-while the terminal sits in a background window. It's deliberately unobtrusive:
-no sound, and a burst of messages collapses into a single banner. Need to
-focus mid-conversation? Type `/snooze` and they pause for 15 minutes —
-`/snooze 45`, `/snooze 1h30m` and `/snooze off` work the way you'd guess, and
-`-no-notify` turns them off for the whole session. Stealth mode and the boss
-screen never notify.
+Every arriving message rings the **terminal bell**, so the room can reach you
+even when the window isn't in front: a bell in a background terminal puts the
+**red badge on the Dock icon** (macOS Terminal, which also bounces), marks
+the tab (iTerm2, tmux) or flashes the taskbar (Windows Terminal). Prefer the
+badge without the beep? Mute the audible bell in your terminal's own
+settings — the badge still works. Need to focus mid-conversation? Type
+`/snooze` and the bell goes quiet for 15 minutes — `/snooze 45`,
+`/snooze 1h30m` and `/snooze off` work the way you'd guess — and `-no-bell`
+turns it off for the whole session. Stealth mode and the boss screen never
+ring.
 
 Editing keys: arrows (move / history), Home/End, Ctrl-A/E, Ctrl-U (clear line),
 Ctrl-W (delete word), Ctrl-L (clear screen), Backspace/Delete.
@@ -242,8 +245,7 @@ Ctrl-W (delete word), Ctrl-L (clear screen), Backspace/Delete.
 | `-stealth` | Disguise the prompt as a shell `$ ` | off |
 | `-prompt <str>` | Custom input prompt | `» ` |
 | `-no-broadcast` | Disable the broadcast fallback | off |
-| `-no-bell` | Don't ring the terminal bell when your name is mentioned | off |
-| `-no-notify` | Don't show desktop notifications for incoming messages | off |
+| `-no-bell` | Don't ring the terminal bell on new messages (the Dock-badge/taskbar signal) | off |
 | `-version` | Print version | |
 
 > **Passphrases:** prefer `-ask` or the `CHAT_KEY` environment variable over
@@ -254,9 +256,9 @@ Ctrl-W (delete word), Ctrl-L (clear screen), Backspace/Delete.
 
 Press **Ctrl-B** and the screen is instantly replaced with plausible build
 output, ending at a shell prompt. While hidden, **nothing pops up and nothing
-beeps** to give you away — desktop notifications are suppressed too — incoming
-messages are held in memory (never on disk), and **replayed the moment you
-come back**, so a quick hide no longer costs you the conversation. Any keystroke restores the chat. `/boss` does the
+beeps** to give you away — incoming messages are held in memory (never on
+disk), and **replayed the moment you come back**, so a quick hide no longer
+costs you the conversation. Any keystroke restores the chat. `/boss` does the
 same thing if you prefer a command. Run with `-stealth` to make the normal
 prompt look like a shell too — in stealth mode chat lines also drop the
 bold/gutter styling and render as flat, logger-style output, and the mention
@@ -384,7 +386,6 @@ The project follows the standard Go layout:
 | `cmd/lanchat/` | CLI entry point — flags, usage, key resolution, wiring |
 | `internal/chat/` | composition root: builds a session and runs the loops |
 | `internal/crypto/` | key derivation, AES-256-GCM sealing, wire framing |
-| `internal/notify/` | best-effort desktop notifications with snooze + burst collapsing |
 | `internal/proto/` | message record, dedup, sequence numbers, sanitizer |
 | `internal/roster/` | presence tracking |
 | `internal/transport/` | UDP multicast + broadcast, interface selection, sockopts |

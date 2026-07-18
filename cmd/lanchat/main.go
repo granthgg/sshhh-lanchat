@@ -26,25 +26,24 @@ import (
 	"github.com/granthgg/sshhh-lanchat/internal/ui"
 )
 
-const version = "2.4.0"
+const version = "2.5.0"
 
 func main() {
 	ui.EnableVirtualTerminal() // Windows: turn on ANSI + UTF-8; no-op elsewhere
 
 	var (
-		room     = flag.String("room", "lobby", "channel name to join")
-		nick     = flag.String("nick", defaultNick(), "your display name")
-		key      = flag.String("key", "", "room passphrase (prefer CHAT_KEY env or -ask)")
-		ask      = flag.Bool("ask", false, "prompt for the passphrase without echoing it")
-		iface    = flag.String("iface", "", "network interface to use (default: auto)")
-		ttl      = flag.Int("ttl", 1, "multicast TTL: 1 stays on the local segment; raise only on LANs that route multicast between subnets")
-		color    = flag.Bool("color", false, "colorize nicknames")
-		stealth  = flag.Bool("stealth", false, `disguise the prompt as a shell "$ " for a lower profile`)
-		prompt   = flag.String("prompt", "", `input prompt (default "» ", or "$ " with -stealth)`)
-		noBcast  = flag.Bool("no-broadcast", false, "disable the UDP broadcast fallback")
-		noBell   = flag.Bool("no-bell", false, "don't ring the terminal bell when your name is mentioned")
-		noNotify = flag.Bool("no-notify", false, "don't show desktop notifications for incoming messages")
-		showVer  = flag.Bool("version", false, "print version and exit")
+		room    = flag.String("room", "lobby", "channel name to join")
+		nick    = flag.String("nick", defaultNick(), "your display name")
+		key     = flag.String("key", "", "room passphrase (prefer CHAT_KEY env or -ask)")
+		ask     = flag.Bool("ask", false, "prompt for the passphrase without echoing it")
+		iface   = flag.String("iface", "", "network interface to use (default: auto)")
+		ttl     = flag.Int("ttl", 1, "multicast TTL: 1 stays on the local segment; raise only on LANs that route multicast between subnets")
+		color   = flag.Bool("color", false, "colorize nicknames")
+		stealth = flag.Bool("stealth", false, `disguise the prompt as a shell "$ " for a lower profile`)
+		prompt  = flag.String("prompt", "", `input prompt (default "» ", or "$ " with -stealth)`)
+		noBcast = flag.Bool("no-broadcast", false, "disable the UDP broadcast fallback")
+		noBell  = flag.Bool("no-bell", false, "don't ring the terminal bell on new messages (the bell is what badges the Dock / flashes the taskbar)")
+		showVer = flag.Bool("version", false, "print version and exit")
 	)
 	// Short aliases.
 	flag.StringVar(room, "r", *room, "alias for -room")
@@ -89,7 +88,6 @@ func main() {
 		Broadcast:  !*noBcast,
 		TTL:        *ttl,
 		Bell:       !*noBell,
-		Notify:     !*noNotify,
 		Version:    version,
 	})
 	if err != nil {
@@ -156,8 +154,7 @@ flags:
       -stealth       disguise the prompt as a shell "$ "
       -prompt <str>  custom input prompt
       -no-broadcast  disable the broadcast fallback
-      -no-bell       don't ring the bell when your name is mentioned
-      -no-notify     don't show desktop notifications for incoming messages
+      -no-bell       don't ring the terminal bell on new messages
       -version       print version
 
 examples:

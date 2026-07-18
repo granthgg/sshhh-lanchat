@@ -54,3 +54,19 @@ func TestListSorted(t *testing.T) {
 		t.Fatalf("List = %v, want %v", got, want)
 	}
 }
+
+// Expire reports both id and nick for each dropped peer, so the caller can
+// announce the departure and release per-peer state (like the color slot).
+func TestExpireReturnsDepartures(t *testing.T) {
+	r := New()
+	r.Seen("id1", "alice")
+	r.peers["id1"].last = r.peers["id1"].last.Add(-2 * presenceTTL)
+
+	left := r.Expire()
+	if len(left) != 1 || left[0] != (Departure{ID: "id1", Nick: "alice"}) {
+		t.Fatalf("Expire = %v, want [{id1 alice}]", left)
+	}
+	if got := r.List(); len(got) != 0 {
+		t.Fatalf("List after expire = %v, want empty", got)
+	}
+}
