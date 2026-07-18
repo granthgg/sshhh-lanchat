@@ -1,19 +1,27 @@
-# lanchat — ephemeral encrypted terminal chat for your LAN
+<div align="center">
+
+# sshhh-lanchat
+
+**Ephemeral, encrypted terminal chat for your LAN.**
+
+No server · no accounts · nothing on disk — close the window and it never happened.
 
 [![CI](https://github.com/granthgg/sshhh-lanchat/actions/workflows/ci.yml/badge.svg)](https://github.com/granthgg/sshhh-lanchat/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/granthgg/sshhh-lanchat?sort=semver)](https://github.com/granthgg/sshhh-lanchat/releases/latest)
 [![Go Report Card](https://goreportcard.com/badge/github.com/granthgg/sshhh-lanchat)](https://goreportcard.com/report/github.com/granthgg/sshhh-lanchat)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Talk to people on the **same Wi-Fi** from a terminal. No server, no account, no
-database, nothing written to disk. Messages exist only while your window is
-open — close it and they're gone. It looks like log output, and one keystroke
-turns the screen into a fake build so a glance over your shoulder reads as
-"compiling," not "chatting."
+🌐 **[sshhh-lanchat.tech](https://sshhh-lanchat.tech/)** · [Install](#install) · [Commands & keys](#commands--keys) · [How it works](#how-it-works) · [Security](#security-model)
 
-It's a single ~3 MB binary with no runtime dependencies. Everyone who runs it
-with the same **room** and **passphrase** is in the same conversation, like
-tuning a walkie-talkie to a channel.
+</div>
+
+Talk to people on the **same Wi-Fi** straight from a terminal. **sshhh-lanchat**
+is a single ~3 MB binary — the `lanchat` command — with no runtime
+dependencies. Everyone who runs it with the same
+**room** and **passphrase** is in the same conversation, like tuning a
+walkie-talkie to a channel. Messages are encrypted on the wire and exist only
+while your window is open; the UI reads like log output, and one keystroke
+swaps it for a fake build if someone walks by.
 
 ```
   lanchat 2.4.0 — ephemeral encrypted LAN chat
@@ -28,80 +36,46 @@ tuning a walkie-talkie to a channel.
   waiting for messages…
 
 14:22:03       granth │ hello, anyone around?
-14:22:04        alice │ hey! yes
+14:22:04        naman │ hey! yes
 » ▏
 ```
 
-Names sit right-aligned and bold against a dimmed `│` gutter, so who-said-what
-is readable at a glance even without `-color` (which additionally gives every
-person their own stable color — no two people in the room share one while the
-12-color palette lasts, even if they picked the same name, and a `/nick`
-rename keeps your color).
-
-## Contents
-
-- [Use it in 30 seconds](#use-it-in-30-seconds)
-- [Install](#install)
-- [Commands](#commands)
-- [Flags](#flags)
-- [Stealth: the boss key](#stealth-the-boss-key)
-- [How it works](#how-it-works)
-- [Security model — read this](#security-model--read-this)
-- [Troubleshooting](#troubleshooting)
-- [Limitations (by design)](#limitations-by-design)
-- [Development](#development)
-- [License](#license)
-
-## Use it in 30 seconds
+## Quick start
 
 ```sh
-lanchat
+lanchat                        # join the open room "lobby"
+lanchat -r team -k coffee123   # private room — only room + passphrase holders can read it
 ```
 
-That's it — you're in the room called **"lobby"**. Now just **type a message and
-press Enter**; anyone else on your Wi-Fi who also ran `lanchat` sees it. Type
-`/quit` (or press Ctrl-C) to leave.
-
-**To make it private**, pick a room name and a shared password. Everyone who
-wants in uses the **same two things**:
-
-```sh
-lanchat -r team -k coffee123
-```
-
-Only people who type that exact room + password can read the messages. Anyone
-else on the network just sees encrypted noise.
-
-> Prefer not to put the password on the command line? Use `lanchat -r team -ask`
-> (it asks you and doesn't show it) or set `CHAT_KEY` in your environment.
+Type a message and press Enter; `/quit` (or Ctrl-C) leaves. Add `-color` to
+give every person their own stable color — no two people in the room share
+one, even with the same name. Prefer not to put the passphrase on the command
+line? Use `-ask` (prompts without echoing) or the `CHAT_KEY` environment
+variable.
 
 ## Install
 
-### Option A — One command, no warnings (recommended)
-
-**Windows (PowerShell):**
-
-```powershell
-irm https://raw.githubusercontent.com/granthgg/sshhh-lanchat/main/scripts/get.ps1 | iex
-```
-
-**macOS / Linux:**
+**One command (recommended)** — fetches the latest release binary for your
+machine, **verifies its SHA-256 checksum**, and puts `lanchat` on your PATH.
+No Go, no git, no SmartScreen/Gatekeeper popups:
 
 ```sh
+# macOS / Linux
 curl -fsSL https://raw.githubusercontent.com/granthgg/sshhh-lanchat/main/scripts/get.sh | sh
 ```
 
-Both fetch the prebuilt binary for your machine from the latest release,
-**verify its SHA-256 checksum** against the release's `checksums.txt`, install
-it onto your PATH, and leave `lanchat` runnable from any terminal. No Go, no
-git, no build — and **no SmartScreen or Gatekeeper popup**, because those
-warnings screen *browser downloads* (which get stamped with a quarantine
-mark); a script download doesn't get the stamp, and the checksum check gives
-you a stronger guarantee than the popup ever did.
+```powershell
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/granthgg/sshhh-lanchat/main/scripts/get.ps1 | iex
+```
 
-### Option B — Manual download
+Sharing with friends? Send them the one-liner for their OS — one paste in a
+terminal installs it, checksum-verified.
 
-Grab the file for your system from the **[latest release »](https://github.com/granthgg/sshhh-lanchat/releases/latest)**:
+<details>
+<summary><b>Manual download</b> — grab a binary from the latest release</summary>
+
+Download the file for your system from the **[latest release »](https://github.com/granthgg/sshhh-lanchat/releases/latest)**:
 
 | Your system | File to download |
 |---|---|
@@ -112,124 +86,68 @@ Grab the file for your system from the **[latest release »](https://github.com/
 | Linux (x86-64) | `lanchat-linux-amd64` |
 | Linux (ARM) | `lanchat-linux-arm64` |
 
-<details>
-<summary><b>Why does Windows/macOS warn that this might be unsafe?</b></summary>
-
-The binaries are **not code-signed** — a signing certificate requires paid
-identity verification, and "publisher reputation" takes time to accrue. So
-when a *browser* downloads the file, the OS has no identity to show and warns
-"unknown publisher" / "unverified developer". **Unsigned is not the same as
-unsafe**: the source is public, every release is built by GitHub's CI directly
-from the tagged source, and `checksums.txt` on the release page lets you
-verify your download is byte-for-byte what CI produced:
-
-```powershell
-Get-FileHash lanchat-windows-amd64.exe   # Windows — compare with checksums.txt
-```
-```sh
-shasum -a 256 lanchat-macos-arm64        # macOS  — compare with checksums.txt
-```
-
-If you'd rather see no warning at all, use **Option A** (script downloads
-aren't screened) or build from source (**Option D**).
-</details>
-
 **Windows** — rename it to `lanchat.exe` and run it. When SmartScreen warns,
-click **More info → Run anyway** (see the note above for why it warns).
+click **More info → Run anyway**.
 
-**macOS / Linux** — in the terminal, in your downloads folder:
+**macOS / Linux** — in your downloads folder:
 
 ```sh
 chmod +x lanchat-*                                     # make it runnable
 xattr -d com.apple.quarantine lanchat-* 2>/dev/null    # macOS only: clear the "unverified developer" block
-./lanchat-macos-arm64                                  # run it (use your file's name)
+mv lanchat-macos-arm64 ~/.local/bin/lanchat            # optional: put it on your PATH (use your file's name)
 ```
 
-To type just `lanchat` from any folder, move it onto your PATH and rename it,
-e.g. `mv lanchat-macos-arm64 ~/.local/bin/lanchat` — or use **Option A**, which
-does that for you.
+> **Why does the OS warn "unknown publisher"?** The binaries aren't
+> code-signed (that requires paid identity verification). Unsigned ≠ unsafe:
+> every release is built by GitHub CI from the public, tagged source, and
+> `checksums.txt` on the release page lets you verify your download
+> byte-for-byte — `Get-FileHash <file>` on Windows, `shasum -a 256 <file>` on
+> macOS/Linux. The one-line installer above skips the popup entirely (it only
+> screens browser downloads) and checks the checksum for you.
+</details>
 
-### Option C — `go install` (one command, needs Go 1.25+)
+<details>
+<summary><b>Go install / build from source</b> — needs Go 1.25+</summary>
+
+**`go install`** (drops `lanchat` into `$(go env GOPATH)/bin` — make sure it's on your PATH):
 
 ```sh
 go install github.com/granthgg/sshhh-lanchat/cmd/lanchat@latest
 ```
 
-This drops `lanchat` in `$(go env GOPATH)/bin`. Make sure that directory is on
-your PATH.
-
-### Option D — Build from source with the installer (needs Go 1.25+)
-
-<details>
-<summary><b>How to install Go</b></summary>
-
-- **macOS (Homebrew):** `brew install go`
-- **Windows / Linux:** the official installer from the [Go downloads page](https://go.dev/dl/).
-- **Ubuntu / Debian:** `sudo apt update && sudo apt install golang-go`
-</details>
-
-**macOS / Linux**
+**Build from source with the installer** (puts `lanchat` on your PATH for you):
 
 ```sh
 git clone https://github.com/granthgg/sshhh-lanchat.git
 cd sshhh-lanchat && ./scripts/install.sh
+# Windows: powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 ```
 
-**Windows (PowerShell)**
+If the *same* terminal you installed from still says `command not found`, it
+cached the old PATH — open a new terminal (or run `hash -r`).
+</details>
 
-```powershell
-git clone https://github.com/granthgg/sshhh-lanchat.git
-cd sshhh-lanchat
-powershell -ExecutionPolicy Bypass -File scripts\install.ps1
-```
-
-The installer drops `lanchat` into a directory already on your PATH (like
-`/opt/homebrew/bin`), or installs to `~/.local/bin` and adds that to your PATH
-by editing your shell startup file for you — so **you can run `lanchat` from any
-directory** with no manual setup.
-
-> If the *same* terminal you installed from still says `command not found`, it
-> cached the old PATH — open a new terminal (or run `hash -r`).
-
-### Share with friends
-
-Easiest: send them the **Option A one-liner** for their OS — one paste in a
-terminal installs it, checksum-verified, with no scary popups. (Or send the
-[release link](https://github.com/granthgg/sshhh-lanchat/releases/latest), or
-hand them the binary directly over AirDrop / USB / Slack.)
-
-## Commands
+## Commands & keys
 
 | Command | Action |
 |---------|--------|
 | *(just type)* | send a message |
 | `/who` | list who's here right now |
-| `/nick <name>` | change your display name |
+| `/nick <name>` | change your display name (keeps your color) |
 | `/me <action>` | send an action, e.g. `* alice waves` |
 | `/snooze [time\|off]` | pause the message bell — `/snooze` = 15 min, `/snooze 1h`, `/snooze off` |
 | `/clear` | clear the screen |
-| `/boss` | hide (fake build output) |
+| `/boss` | hide behind fake build output |
 | `/quit` | leave |
-| **Tab** | **complete** nicknames and commands — press again to cycle matches |
+| **Tab** | complete nicknames and commands — press again to cycle matches |
 | **Ctrl-B** | **instant boss key** — hide immediately, any key restores |
 
-`Tab` on `al` becomes `alice: ` (names come from who's in the room right now);
-`/n<Tab>` becomes `/nick `. When someone writes **your name**, the line is
-additionally shown in bold so it stands out in the flow.
-
-Every arriving message rings the **terminal bell**, so the room can reach you
-even when the window isn't in front: a bell in a background terminal puts the
-**red badge on the Dock icon** (macOS Terminal, which also bounces), marks
-the tab (iTerm2, tmux) or flashes the taskbar (Windows Terminal). Prefer the
-badge without the beep? Mute the audible bell in your terminal's own
-settings — the badge still works. Need to focus mid-conversation? Type
-`/snooze` and the bell goes quiet for 15 minutes — `/snooze 45`,
-`/snooze 1h30m` and `/snooze off` work the way you'd guess — and `-no-bell`
-turns it off for the whole session. Stealth mode and the boss screen never
-ring.
-
-Editing keys: arrows (move / history), Home/End, Ctrl-A/E, Ctrl-U (clear line),
-Ctrl-W (delete word), Ctrl-L (clear screen), Backspace/Delete.
+Lines mentioning **your name** are shown in bold, and every arriving message
+rings the **terminal bell** — in a background window that badges the Dock icon
+(macOS), marks the tab (iTerm2, tmux), or flashes the taskbar (Windows
+Terminal). `/snooze` quiets it for a while; `-no-bell` for the whole session.
+The usual editing keys work: arrows (move / history), Home/End, Ctrl-A/E,
+Ctrl-U, Ctrl-W, Ctrl-L.
 
 ## Flags
 
@@ -245,129 +163,77 @@ Ctrl-W (delete word), Ctrl-L (clear screen), Backspace/Delete.
 | `-stealth` | Disguise the prompt as a shell `$ ` | off |
 | `-prompt <str>` | Custom input prompt | `» ` |
 | `-no-broadcast` | Disable the broadcast fallback | off |
-| `-no-bell` | Don't ring the terminal bell on new messages (the Dock-badge/taskbar signal) | off |
+| `-no-bell` | Don't ring the terminal bell on new messages | off |
 | `-version` | Print version | |
 
 > **Passphrases:** prefer `-ask` or the `CHAT_KEY` environment variable over
-> `-k`. Anything on the command line is visible in your shell history and to
-> other users via the process list.
+> `-k` — anything on the command line is visible in shell history and the
+> process list.
 
-## Stealth: the boss key
+## The boss key
 
-Press **Ctrl-B** and the screen is instantly replaced with plausible build
-output, ending at a shell prompt. While hidden, **nothing pops up and nothing
-beeps** to give you away — incoming messages are held in memory (never on
-disk), and **replayed the moment you come back**, so a quick hide no longer
-costs you the conversation. Any keystroke restores the chat. `/boss` does the
-same thing if you prefer a command. Run with `-stealth` to make the normal
-prompt look like a shell too — in stealth mode chat lines also drop the
-bold/gutter styling and render as flat, logger-style output, and the mention
-bell stays off.
-
-The replay buffer keeps the last 500 lines of a hide; an hours-long hide shows
-the most recent 500 and says how many older ones were dropped.
+Press **Ctrl-B** (or type `/boss`) and the screen is instantly replaced with
+plausible build output ending at a shell prompt. While hidden, nothing pops up
+and nothing beeps — incoming messages are held in memory (never on disk) and
+**replayed the moment you come back** (last 500 lines). Any keystroke restores
+the chat. Run with `-stealth` to disguise the normal prompt as a shell too —
+chat lines then render as flat, logger-style output and the bell stays off.
 
 ## How it works
 
 There is **no host and no server**. Every instance sends and receives on a UDP
-**multicast** group derived from the room name. That single choice gives you:
+**multicast** group derived from the room name — so there's nothing to keep
+running, nothing sent before you joined is visible, nothing is ever stored,
+and the idle footprint is ~0 CPU and a few MB. Every datagram is encrypted
+with **AES-256-GCM** using a key derived from room + passphrase (PBKDF2), and
+traffic uses TTL 1 by default so it never leaves the local segment.
 
-- **Nothing to keep running.** Anyone can join or leave at any time; the
-  conversation never "goes down" because there's no one holding it up.
-- **Truly ephemeral.** UDP is stateless. You only receive datagrams while you're
-  listening, so nothing sent before you opened your window is visible, and
-  nothing is ever stored.
-- **Tiny footprint.** No connections to track; idle CPU ~0, memory a few MB.
-- **Privacy on the wire.** Every datagram is encrypted with AES-256-GCM using a
-  key derived from your room + passphrase (PBKDF2). People without the
-  passphrase — including whoever runs Wireshark on the office network — see only
-  ciphertext. Traffic uses multicast **TTL 1** by default, so it never leaves
-  the local segment.
+Delivery is layered to survive messy real-world LANs:
 
-Real-world networks get in the way of naive multicast, so delivery is layered
-to work on messy LANs — office Wi-Fi, mesh networks, machines with several
-network interfaces:
+- Multicast goes out on **every usable interface**, so a machine on Ethernet and Wi-Fi reaches peers on either segment.
+- A **directed-broadcast** copy per subnet is the fallback for networks that filter multicast; duplicates are de-duplicated automatically.
+- Interfaces are **re-scanned every 20 s** — roaming between access points, waking from sleep, or switching networks needs no restart.
+- **VPN tunnels are skipped** during auto-detection so chat stays on the LAN (`-iface` overrides).
+- Messages are size-bounded so a frame **never fragments** — fragments are the first thing unreliable Wi-Fi drops.
 
-- Multicast is sent on **every usable interface**, so a machine on both
-  Ethernet and Wi-Fi reaches peers on either segment.
-- A **directed-broadcast** copy (e.g. `192.168.1.255`) is sent per subnet as a
-  fallback for networks that filter multicast (common on corporate Wi-Fi with
-  IGMP snooping). Duplicates are de-duplicated automatically.
-- Interfaces are **re-scanned every 20 s**: roaming between access points,
-  waking from sleep, or switching networks re-establishes multicast membership
-  without a restart.
-- **VPN tunnels are skipped** during auto-detection so chat traffic stays on
-  the LAN instead of disappearing into the tunnel (pin one explicitly with
-  `-iface` to override).
-- Messages are size-bounded so a frame **never fragments** — fragments are the
-  first thing unreliable Wi-Fi gear drops.
+Wire format, package layout, and threading model: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-For the wire format, package layout, and threading model, see
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+## Security model
 
-## Security model — read this
+**Protects against:** casual shoulder-surfing (the boss key, the log-like
+format) and passive sniffing of a **private** room — without the passphrase,
+captured packets are unreadable ciphertext.
 
-**What it protects against:** casual shoulder-surfing (the boss key and the
-log-like format) and passive network sniffing of a **private** room (AES-256-GCM;
-without the passphrase, captured packets are unreadable).
+**Does *not* provide:**
 
-**What it does _not_ do:**
+- **Privacy in open rooms.** With no passphrase, the key derives from the room name alone — treat an open room as a public channel on that LAN. The startup banner tells you which mode you're in.
+- **Identity.** Anyone with the passphrase can use any nickname; there is no proof that "alice" is Alice.
+- **Forward secrecy or message signing.** It's a lightweight LAN toy, not Signal — don't send anything you wouldn't say out loud in the office.
 
-- **Open rooms are not private.** With no passphrase, the key is derived from the
-  room name alone, which anyone can do. Treat an open room as a public channel on
-  that LAN. The startup banner tells you which mode you're in.
-- **No identity / no spoofing protection.** Anyone with the passphrase can use any
-  nickname. There is no proof that "alice" is Alice.
-- **No forward secrecy, no message signing.** It's a lightweight LAN toy, not
-  Signal. Don't send anything you'd be unwilling to say out loud in the office.
-- Text from the network is stripped of control characters before display, so a
-  peer can't inject terminal escape sequences — but a shared passphrase still
-  means shared trust.
+Incoming text is stripped of control characters before display, so a peer
+can't inject terminal escape sequences — but a shared passphrase still means
+shared trust.
 
 ## Troubleshooting
 
-**`command not found: lanchat`** — almost always just the terminal you
-installed from caching its old PATH. **Open a new terminal** (or run `hash -r`)
-and try again. If it still fails, the installer told you where it put the binary;
-run it by full path once (e.g. `/opt/homebrew/bin/lanchat` or
-`~/.local/bin/lanchat`) to confirm it's there.
+**`command not found: lanchat`** right after installing — the terminal cached
+its old PATH. Open a new terminal (or run `hash -r`).
 
-**We're on the same Wi-Fi but can't see each other.**
+**Same Wi-Fi but can't see each other?**
 
-1. **Same room *and* passphrase?** A different passphrase = a different key = you
-   simply can't read each other. Open and private rooms of the same name don't mix.
-2. **Firewall.** First run, macOS asks to allow incoming connections and Windows
-   prompts to allow the app — say yes (Private networks on Windows).
-3. **"AP isolation" / guest Wi-Fi.** Many guest and public networks block clients
-   from talking to each other. Nothing on the device can fix that — use a trusted
-   network.
-4. **Multicast-filtering office networks.** Corporate Wi-Fi often filters
-   multicast; lanchat detects this ("couldn't join multicast" in the banner) and
-   automatically falls back to directed broadcast per subnet. If your network
-   blocks *both*, that's AP isolation in practice — see point 3.
-5. **Different subnets behind different routers.** A campus "same Wi-Fi" can
-   actually be several routed subnets. By default traffic stays on one segment
-   (TTL 1, a privacy feature). If — and only if — your network routes multicast
-   between subnets, `-ttl 4` lets frames cross.
-6. **VPN.** Auto-detection skips VPN tunnels, so an active VPN no longer
-   swallows chat traffic. If you *want* to chat over a tunnel that supports
-   multicast, pin it explicitly with `-iface utun3` (find names via
-   `ifconfig` / `ip addr` / `ipconfig`).
-7. **See what's arriving:** run with `CHAT_DEBUG=1` to print received-packet
-   diagnostics to stderr.
+1. **Same room *and* passphrase?** A different passphrase is a different key — open and private rooms of the same name don't mix.
+2. **Firewall.** Say yes when macOS/Windows asks on first run (Private networks on Windows).
+3. **AP isolation / guest Wi-Fi** blocks clients from talking to each other — nothing on the device can fix that; use a trusted network.
+4. **Multicast-filtering office Wi-Fi** is detected ("couldn't join multicast" in the banner) and sshhh-lanchat falls back to directed broadcast automatically. If both are blocked, that's AP isolation — see 3.
+5. **Different subnets.** TTL 1 keeps traffic on one segment by design; if your network routes multicast between subnets, `-ttl 4` lets frames cross.
+6. **VPN.** Auto-detection skips tunnels; to chat over a multicast-capable tunnel, pin it with `-iface utun3` (names via `ifconfig` / `ip addr` / `ipconfig`).
+7. **Debug:** run with `CHAT_DEBUG=1` to print received-packet diagnostics to stderr.
 
 ## Limitations (by design)
 
-- **Best-effort delivery.** UDP can drop a packet on a congested network; a
-  missed line is simply missed (it matches the "ephemeral, no storage" model).
-  Messages are sent over multicast on every interface plus a broadcast copy per
-  subnet to make loss rare.
-- **Single LAN segment by default.** TTL 1 means it won't cross routers/subnets.
-  That's intentional — it's a *local* chat (see `-ttl` if your network routes
-  multicast).
-- **Multiple instances on one machine (macOS):** works, but which window receives
-  a given looped-back packet can be unreliable due to how macOS load-balances a
-  shared socket. Normal use — one instance per machine — is unaffected.
+- **Best-effort delivery.** UDP can drop a packet on a congested network; a missed line is simply missed — it matches the ephemeral, no-storage model, and the multicast + broadcast layering makes loss rare.
+- **Single LAN segment by default.** TTL 1 won't cross routers — it's a *local* chat (see `-ttl`).
+- **Multiple instances on one macOS machine** share a socket, so which window receives a looped-back packet can be unreliable. One instance per machine — normal use — is unaffected.
 
 ## Development
 
@@ -375,33 +241,18 @@ run it by full path once (e.g. `/opt/homebrew/bin/lanchat` or
 make build      # build ./lanchat for this machine
 make test       # unit tests (crypto round-trip, room isolation, dedup, sanitizer)
 make vet        # go vet ./...
-make fmt        # gofmt the tree
-make cross      # build binaries for all desktop targets into dist/
+make cross      # binaries for all desktop targets into dist/
 ```
 
-The project follows the standard Go layout:
-
-| Path | Responsibility |
-|------|----------------|
-| `cmd/lanchat/` | CLI entry point — flags, usage, key resolution, wiring |
-| `internal/chat/` | composition root: builds a session and runs the loops |
-| `internal/crypto/` | key derivation, AES-256-GCM sealing, wire framing |
-| `internal/proto/` | message record, dedup, sequence numbers, sanitizer |
-| `internal/roster/` | presence tracking |
-| `internal/transport/` | UDP multicast + broadcast, interface selection, sockopts |
-| `internal/ui/` | raw-mode line editor, thread-safe printer, boss-key decoy |
-
-Zero third-party crypto — encryption is Go's standard library. The only
-dependencies are the official `golang.org/x/{net,term,sys}` packages for
-cross-platform multicast and terminal handling. See
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a deeper tour.
-
-Releases are cut by pushing a version tag (`git tag v2.4.0 && git push origin
-v2.4.0`); CI cross-compiles every target, generates `checksums.txt`, and
-attaches everything to a GitHub Release automatically. See
-[docs/RELEASING.md](docs/RELEASING.md) for the release process and the
-code-signing / notarization roadmap that would remove the manual-download
-warnings entirely.
+Standard Go layout: `cmd/lanchat/` is the CLI entry point, and
+`internal/{chat,crypto,proto,roster,transport,ui}` hold the session loop,
+key derivation + AES-GCM sealing, message records/dedup, presence tracking,
+UDP multicast/broadcast, and the raw-mode terminal UI. Zero third-party
+crypto — encryption is Go's standard library; `golang.org/x/{net,term,sys}`
+are the only dependencies. Deeper tour in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); the release process (push a
+version tag, CI builds + checksums + publishes) in
+[docs/RELEASING.md](docs/RELEASING.md).
 
 ## License
 
