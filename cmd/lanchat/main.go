@@ -26,7 +26,7 @@ import (
 	"github.com/granthgg/sshhh-lanchat/internal/ui"
 )
 
-const version = "2.5.0"
+const version = "2.6.0"
 
 func main() {
 	ui.EnableVirtualTerminal() // Windows: turn on ANSI + UTF-8; no-op elsewhere
@@ -43,6 +43,7 @@ func main() {
 		prompt  = flag.String("prompt", "", `input prompt (default "» ", or "$ " with -stealth)`)
 		noBcast = flag.Bool("no-broadcast", false, "disable the UDP broadcast fallback")
 		noBell  = flag.Bool("no-bell", false, "don't ring the terminal bell on new messages (the bell is what badges the Dock / flashes the taskbar)")
+		noUpdCk = flag.Bool("no-update-check", false, "disable the one-shot check for a newer release (the only internet traffic lanchat makes)")
 		showVer = flag.Bool("version", false, "print version and exit")
 	)
 	// Short aliases.
@@ -78,17 +79,18 @@ func main() {
 	}
 
 	err = chat.Run(chat.Config{
-		Room:       *room,
-		Nick:       nickStr,
-		Passphrase: passphrase,
-		Iface:      *iface,
-		Color:      *color,
-		Stealth:    *stealth,
-		Prompt:     promptStr,
-		Broadcast:  !*noBcast,
-		TTL:        *ttl,
-		Bell:       !*noBell,
-		Version:    version,
+		Room:          *room,
+		Nick:          nickStr,
+		Passphrase:    passphrase,
+		Iface:         *iface,
+		Color:         *color,
+		Stealth:       *stealth,
+		Prompt:        promptStr,
+		Broadcast:     !*noBcast,
+		TTL:           *ttl,
+		Bell:          !*noBell,
+		Version:       version,
+		NoUpdateCheck: *noUpdCk,
 	})
 	if err != nil {
 		fatal(err.Error())
@@ -155,6 +157,8 @@ flags:
       -prompt <str>  custom input prompt
       -no-broadcast  disable the broadcast fallback
       -no-bell       don't ring the terminal bell on new messages
+      -no-update-check
+                     don't check GitHub for a newer release
       -version       print version
 
 examples:

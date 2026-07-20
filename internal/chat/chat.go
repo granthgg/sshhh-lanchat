@@ -4,6 +4,7 @@
 package chat
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"github.com/granthgg/sshhh-lanchat/internal/roster"
 	"github.com/granthgg/sshhh-lanchat/internal/transport"
 	"github.com/granthgg/sshhh-lanchat/internal/ui"
+	"github.com/granthgg/sshhh-lanchat/internal/update"
 )
 
 var debugOn = os.Getenv("CHAT_DEBUG") != ""
@@ -40,6 +42,10 @@ type Config struct {
 	TTL        int    // multicast TTL (1 = stay on the local segment)
 	Bell       bool   // terminal bell on new messages — the Dock-badge/taskbar signal
 	Version    string // version string shown in the banner
+	// NoUpdateCheck disables the one-shot GitHub Releases lookup that
+	// notifies when a newer version exists. That request is the only
+	// internet traffic lanchat ever makes; air-gapped users set this.
+	NoUpdateCheck bool
 }
 
 // Client is one running chat session.
@@ -121,6 +127,9 @@ func Run(cfg Config) error {
 	go c.presenceLoop()
 	go c.expireLoop()
 	go c.ui.Run()
+	if !cfg.Stealth && !cfg.NoUpdateCheck {
+		go c.updateNotice()
+	}
 
 	c.send(proto.TypeJoin, "")
 
@@ -612,4 +621,58 @@ func (c *Client) banner(private bool) {
 	}
 	c.ui.Plain(s.dim("  waiting for messages…"))
 	c.ui.Plain("")
+}
+
+// ---- update notice ----------------------------------------------------------
+
+// updateNotice checks GitHub Releases once per session and, if a newer stable
+// release exists, prints a dim system notice with the one-line installer.
+// It is a courtesy, not a phone-home: a single GET to a public endpoint with
+// no identifying data, bounded to a few seconds, and every failure — offline,
+// DNS, timeout, rate limit — is silently dropped. Stealth mode and
+// -no-update-check never start this goroutine.
+func (c *Client) updateNotice() {
+	// Let the banner settle and the join land first; an update hint should
+	// never be the first thing on screen. If the session ends meanwhile,
+	// don't bother at all.
+	select {
+	case <-time.After(2 * time.Second):
+	case <-c.quit:
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	// Tear the request down the instant the session ends — the notice has
+	// nowhere to go after that. AfterFunc's returned stop call also drops
+	// the registration so it can't fire after cancel().
+	go func() {
+		select {
+		case <-c.quit:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
+	latest, err := update.Latest(ctx, update.LatestURL)
+	if err != nil {
+		if debugOn {
+			fmt.Fprintf(os.Stderr, "update check: %v\n", err)
+		}
+		return
+	}
+	if !update.Newer(c.version, latest) {
+		return
+	}
+
+	// The session may have ended while the request was in flight.
+	select {
+	case <-c.quit:
+		return
+	default:
+	}
+
+	s := style(c.ui.Interactive())
+	c.ui.System(s.yellow("lanchat "+latest+" is out") + s.dim(" — you're on "+c.version))
+	c.ui.System(s.dim("update: " + update.Command()))
 }

@@ -5,8 +5,8 @@
 ```sh
 # 1. bump `const version` in cmd/lanchat/main.go and commit
 # 2. tag and push — CI does the rest
-git tag v2.3.0
-git push origin v2.3.0
+git tag v2.6.0
+git push origin v2.6.0
 ```
 
 The [release workflow](../.github/workflows/release.yml) cross-compiles all six

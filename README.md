@@ -32,7 +32,7 @@ while your window is open; the UI reads like log output, and one keystroke
 swaps it for a fake build if someone walks by.
 
 ```
-  lanchat 2.4.0 — ephemeral encrypted LAN chat
+  lanchat 2.6.0 — ephemeral encrypted LAN chat
   ────────────────────────────────────────────────────────────────
   room   "lobby" · OPEN — anyone on this Wi-Fi can read it
   you    "granth" · rename with /nick <name>
@@ -66,6 +66,18 @@ variable.
 **One command (recommended)** — fetches the latest release binary for your
 machine, **verifies its SHA-256 checksum**, and puts `lanchat` on your PATH.
 No Go, no git, no SmartScreen/Gatekeeper popups:
+
+```sh
+# macOS / Linux
+curl -fsSL https://sshhh-lanchat.tech/install.sh | sh
+```
+
+```powershell
+# Windows (PowerShell)
+irm https://sshhh-lanchat.tech/install.ps1 | iex
+```
+
+**Alternative** — use the GitHub URLs directly:
 
 ```sh
 # macOS / Linux
@@ -172,6 +184,7 @@ Ctrl-U, Ctrl-W, Ctrl-L.
 | `-prompt <str>` | Custom input prompt | `» ` |
 | `-no-broadcast` | Disable the broadcast fallback | off |
 | `-no-bell` | Don't ring the terminal bell on new messages | off |
+| `-no-update-check` | Don't check GitHub for a newer release on start | off |
 | `-version` | Print version | |
 
 > **Passphrases:** prefer `-ask` or the `CHAT_KEY` environment variable over
@@ -203,6 +216,13 @@ Delivery is layered to survive messy real-world LANs:
 - Interfaces are **re-scanned every 20 s** — roaming between access points, waking from sleep, or switching networks needs no restart.
 - **VPN tunnels are skipped** during auto-detection so chat stays on the LAN (`-iface` overrides).
 - Messages are size-bounded so a frame **never fragments** — fragments are the first thing unreliable Wi-Fi drops.
+
+**Update notices.** On start, `lanchat` makes one HTTPS GET to the GitHub
+Releases API and, if a newer stable release is out, prints a dim system notice
+with the one-line installer for your platform. It's the only internet traffic
+the program ever makes — chat itself never leaves the LAN — and it carries no
+identifying data, times out in a few seconds, and fails silently when offline.
+Stealth mode skips it, and `-no-update-check` disables it permanently.
 
 Wire format, package layout, and threading model: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
