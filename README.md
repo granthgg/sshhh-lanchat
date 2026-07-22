@@ -32,7 +32,7 @@ while your window is open; the UI reads like log output, and one keystroke
 swaps it for a fake build if someone walks by.
 
 ```
-  lanchat 2.6.0 — ephemeral encrypted LAN chat
+  lanchat 2.6.1 — ephemeral encrypted LAN chat
   ────────────────────────────────────────────────────────────────
   room   "lobby" · OPEN — anyone on this Wi-Fi can read it
   you    "granth" · rename with /nick <name>
@@ -146,6 +146,33 @@ cd sshhh-lanchat && ./scripts/install.sh
 If the *same* terminal you installed from still says `command not found`, it
 cached the old PATH — open a new terminal (or run `hash -r`).
 </details>
+
+## Uninstall
+
+`lanchat` stores nothing on disk — no config, no history, no data — so removing
+it is just deleting the binary and undoing the PATH entry the installer added.
+One command does both, and reverses every install method above:
+
+```sh
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/granthgg/sshhh-lanchat/main/scripts/uninstall.sh | sh
+```
+
+```powershell
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/granthgg/sshhh-lanchat/main/scripts/uninstall.ps1 | iex
+```
+
+Already have the repo cloned? Run it locally instead:
+
+```sh
+./scripts/uninstall.sh                                          # macOS / Linux
+powershell -ExecutionPolicy Bypass -File scripts\uninstall.ps1  # Windows
+```
+
+Afterward, open a new terminal (or run `hash -r`) so the PATH change takes
+effect. Installed with `go install`? That copy lives in `$(go env GOPATH)/bin`,
+and the uninstaller removes it too.
 
 ## Commands & keys
 
