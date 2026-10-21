@@ -210,6 +210,8 @@ Ctrl-U, Ctrl-W, Ctrl-L.
 | `-stealth` | Disguise the prompt as a shell `$ ` | off |
 | `-prompt <str>` | Custom input prompt | `» ` |
 | `-no-broadcast` | Disable the broadcast fallback | off |
+| `-tailscale` | Also send directly to every online Tailscale peer | off |
+| `-peer <hosts>` | Comma-separated hosts/IPs to also send to directly (e.g. `100.64.0.2,laptop.tailnet.ts.net`) | none |
 | `-no-bell` | Don't ring the terminal bell on new messages | off |
 | `-no-update-check` | Don't check GitHub for a newer release on start | off |
 | `-version` | Print version | |
@@ -242,6 +244,7 @@ Delivery is layered to survive messy real-world LANs:
 - A **directed-broadcast** copy per subnet is the fallback for networks that filter multicast; duplicates are de-duplicated automatically.
 - Interfaces are **re-scanned every 20 s** — roaming between access points, waking from sleep, or switching networks needs no restart.
 - **VPN tunnels are skipped** during auto-detection so chat stays on the LAN (`-iface` overrides).
+- **Overlay networks** (Tailscale, WireGuard) carry neither multicast nor broadcast, so `-tailscale` / `-peer` add a **unicast copy** per peer; peers are re-resolved on every re-scan.
 - Messages are size-bounded so a frame **never fragments** — fragments are the first thing unreliable Wi-Fi drops.
 
 **Update notices.** On start, `lanchat` makes one HTTPS GET to the GitHub
@@ -282,6 +285,7 @@ its old PATH. Open a new terminal (or run `hash -r`).
 4. **Multicast-filtering office Wi-Fi** is detected ("couldn't join multicast" in the banner) and sshhh-lanchat falls back to directed broadcast automatically. If both are blocked, that's AP isolation — see 3.
 5. **Different subnets.** TTL 1 keeps traffic on one segment by design; if your network routes multicast between subnets, `-ttl 4` lets frames cross.
 6. **VPN.** Auto-detection skips tunnels; to chat over a multicast-capable tunnel, pin it with `-iface utun3` (names via `ifconfig` / `ip addr` / `ipconfig`).
+   **Tailscale / WireGuard** don't carry multicast at all — use `-tailscale` (every online peer from `tailscale status`) or `-peer <ip,host,…>`; everyone in the room needs it. Use a passphrase: with `-tailscale` an open room reaches every device on your tailnet.
 7. **Debug:** run with `CHAT_DEBUG=1` to print received-packet diagnostics to stderr.
 
 ## Limitations (by design)

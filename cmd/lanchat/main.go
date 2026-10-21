@@ -45,6 +45,8 @@ func main() {
 		noBell  = flag.Bool("no-bell", false, "don't ring the terminal bell on new messages (the bell is what badges the Dock / flashes the taskbar)")
 		noUpdCk = flag.Bool("no-update-check", false, "disable the one-shot check for a newer release (the only internet traffic lanchat makes)")
 		showVer = flag.Bool("version", false, "print version and exit")
+		peers   = flag.String("peer", "", "comma-separated hosts/IPs to also send to directly (e.g. Tailscale peers)")
+		tscale  = flag.Bool("tailscale", false, "also send directly to every online Tailscale peer")
 	)
 	// Short aliases.
 	flag.StringVar(room, "r", *room, "alias for -room")
@@ -88,6 +90,8 @@ func main() {
 		Prompt:        promptStr,
 		Broadcast:     !*noBcast,
 		TTL:           *ttl,
+		Peers:         splitList(*peers),
+		Tailscale:     *tscale,
 		Bell:          !*noBell,
 		Version:       version,
 		NoUpdateCheck: *noUpdCk,
@@ -156,6 +160,9 @@ flags:
       -stealth       disguise the prompt as a shell "$ "
       -prompt <str>  custom input prompt
       -no-broadcast  disable the broadcast fallback
+      -tailscale     also send directly to every online Tailscale peer
+      -peer <hosts>  comma-separated hosts/IPs to send to directly
+                     (e.g. 100.64.0.2,laptop.tailnet.ts.net)
       -no-bell       don't ring the terminal bell on new messages
       -no-update-check
                      don't check GitHub for a newer release
@@ -166,6 +173,7 @@ examples:
   lanchat -r team -ask                private room, prompt for passphrase
   CHAT_KEY=hunter2 lanchat -r team    private room via environment
   lanchat -n alice -color             named, with colored nicks
+  lanchat -r team -ask -tailscale     chat across your tailnet
 
 in session: type a message and press Enter to send
             /who  /nick <name>  /me <action>  /snooze [time|off]  /clear  /boss  /quit
@@ -176,4 +184,15 @@ in session: type a message and press Enter to send
 func fatal(msg string) {
 	fmt.Fprintln(os.Stderr, "lanchat: "+msg)
 	os.Exit(1)
+}
+
+// splitList splits a comma-separated flag value, dropping empty entries.
+func splitList(s string) []string {
+	var out []string
+	for _, f := range strings.Split(s, ",") {
+		if f = strings.TrimSpace(f); f != "" {
+			out = append(out, f)
+		}
+	}
+	return out
 }

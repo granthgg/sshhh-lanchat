@@ -46,10 +46,12 @@ const rescanEvery = 20 * time.Second
 
 // Options configures Open.
 type Options struct {
-	Room      string // room name; determines the multicast group
-	Iface     string // pin one interface by name; "" = auto-detect
-	Broadcast bool   // also send directed-broadcast copies of every frame
-	TTL       int    // multicast TTL; 1 = never routed off the local segment
+	Room      string   // room name; determines the multicast group
+	Iface     string   // pin one interface by name; "" = auto-detect
+	Broadcast bool     // also send directed-broadcast copies of every frame
+	TTL       int      // multicast TTL; 1 = never routed off the local segment
+	Peers     []string // unicast targets (hosts/IPs), e.g. Tailscale peers
+	Tailscale bool     // also unicast to every online peer from `tailscale status`
 }
 
 // Transport carries encrypted frames to and from peers on the local segment.
@@ -62,6 +64,7 @@ type Transport struct {
 	send   []net.Interface // interfaces to send multicast on
 	bcasts []*net.UDPAddr  // directed-broadcast destinations, one per subnet
 	joined map[int]bool    // interface index → multicast group joined
+	peers  []*net.UDPAddr  // unicast destinations (overlay networks, see peers.go)
 
 	closeOnce sync.Once
 	done      chan struct{}
@@ -148,6 +151,9 @@ func (t *Transport) Send(frame []byte) {
 		_ = t.pc.SetMulticastInterface(&t.send[i])
 		_, _ = t.pc.WriteTo(frame, nil, t.group)
 	}
+	for _, p := range t.peers {
+		_, _ = t.pc.WriteTo(frame, nil, p)
+	}
 	if t.opts.Broadcast {
 		for _, b := range t.bcasts {
 			_, _ = t.pc.WriteTo(frame, nil, b)
@@ -178,6 +184,13 @@ func (t *Transport) Joined() int {
 	return len(t.joined)
 }
 
+// Peers reports how many unicast peers are currently targeted.
+func (t *Transport) Peers() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.peers)
+}
+
 // rescanLoop refreshes interface state until Close.
 func (t *Transport) rescanLoop() {
 	tick := time.NewTicker(rescanEvery)
@@ -196,6 +209,10 @@ func (t *Transport) rescanLoop() {
 // forgets vanished ones, and rebuilds the send and broadcast target lists.
 func (t *Transport) rescan() {
 	candidates, send := usableInterfaces(t.opts.Iface)
+	var peers []*net.UDPAddr
+	if len(t.opts.Peers) > 0 || t.opts.Tailscale {
+		peers = resolvePeers(t.opts.Peers, t.opts.Tailscale) // DNS / CLI: outside the lock
+	}
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -220,6 +237,7 @@ func (t *Transport) rescan() {
 
 	t.send = send
 	t.bcasts = broadcastAddrs(send)
+	t.peers = peers
 }
 
 // usableInterfaces returns the interfaces to join the multicast group on

@@ -31,17 +31,19 @@ var debugOn = os.Getenv("CHAT_DEBUG") != ""
 // Config is the fully-resolved set of options for one session. The caller is
 // responsible for sanitizing and defaulting fields (e.g. Nick) before Run.
 type Config struct {
-	Room       string // channel name
-	Nick       string // display name (already sanitized/clamped)
-	Passphrase string // room passphrase; empty means an open room
-	Iface      string // pinned network interface, or "" to auto-detect
-	Color      bool   // colorize nicknames
-	Stealth    bool   // quieter banner and shell-like prompt
-	Prompt     string // input prompt string
-	Broadcast  bool   // send directed-broadcast copies alongside multicast
-	TTL        int    // multicast TTL (1 = stay on the local segment)
-	Bell       bool   // terminal bell on new messages — the Dock-badge/taskbar signal
-	Version    string // version string shown in the banner
+	Room       string   // channel name
+	Nick       string   // display name (already sanitized/clamped)
+	Passphrase string   // room passphrase; empty means an open room
+	Iface      string   // pinned network interface, or "" to auto-detect
+	Color      bool     // colorize nicknames
+	Stealth    bool     // quieter banner and shell-like prompt
+	Prompt     string   // input prompt string
+	Broadcast  bool     // send directed-broadcast copies alongside multicast
+	TTL        int      // multicast TTL (1 = stay on the local segment)
+	Peers      []string // unicast peers (hosts/IPs) for overlay networks like Tailscale
+	Tailscale  bool     // auto-add online Tailscale peers as unicast targets
+	Bell       bool     // terminal bell on new messages — the Dock-badge/taskbar signal
+	Version    string   // version string shown in the banner
 	// NoUpdateCheck disables the one-shot GitHub Releases lookup that
 	// notifies when a newer version exists. That request is the only
 	// internet traffic lanchat ever makes; air-gapped users set this.
@@ -90,6 +92,8 @@ func Run(cfg Config) error {
 		Iface:     cfg.Iface,
 		Broadcast: cfg.Broadcast,
 		TTL:       cfg.TTL,
+		Peers:     cfg.Peers,
+		Tailscale: cfg.Tailscale,
 	})
 	if err != nil {
 		return fmt.Errorf("%w\n(is another program using the port, or is the network down?)", err)
@@ -577,7 +581,7 @@ func (c *Client) banner(private bool) {
 		if !private {
 			c.ui.System(`open room — anyone on this Wi-Fi can read it (-k "secret" makes it private)`)
 		}
-		if c.tr.Joined() == 0 && !c.broadcast {
+		if c.tr.Joined() == 0 && !c.broadcast && c.tr.Peers() == 0 {
 			c.ui.System("warning: no multicast and -no-broadcast is set — you may not reach anyone")
 		}
 		return
@@ -608,6 +612,9 @@ func (c *Client) banner(private bool) {
 	row("send", "type a message and press Enter — the room sees it live")
 	row("keys", "/help · /quit · Tab = complete · Ctrl-B = instant hide")
 	row("saved", "nothing — messages exist only while the window is open")
+	if n := c.tr.Peers(); n > 0 {
+		row("peers", fmt.Sprintf("%d unicast peer(s) — e.g. over Tailscale", n))
+	}
 	if c.tr.Joined() == 0 {
 		if c.broadcast {
 			row("note", s.yellow("couldn't join multicast — using broadcast fallback"))

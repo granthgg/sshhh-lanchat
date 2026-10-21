@@ -111,6 +111,7 @@ common failure modes:
 | Office Wi-Fi filters multicast (IGMP snooping, no querier) | a directed-broadcast copy (`x.y.z.255`) per subnet |
 | Active VPN owns the default route | auto-detection skips point-to-point tunnels; directed broadcast never follows the default route |
 | AP roam / sleep-wake / DHCP change | interfaces re-scanned every 20 s; group re-joined on new ones |
+| Overlay network without multicast (Tailscale, WireGuard) | `-tailscale` / `-peer` add a unicast copy per peer, re-resolved every 20 s |
 | Multi-subnet campus that routes multicast | `-ttl n` raises the TTL (default stays 1 for privacy) |
 | Burst loss at the socket | 1 MB kernel receive buffer |
 | Room hash colliding with SSDP/SLP groups | reserved 239.255.x.y pairs are skipped |
